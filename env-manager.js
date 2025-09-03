@@ -3,7 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const axios = require("axios");
 const { createTextBox } = require("./components/text-input");
-const { dbOps } = require("./db");
+const { dbOps, sessionManager } = require("./db");
 const chalk = require("chalk");
 
 const ALGORITHM = "aes-256-gcm";
@@ -438,6 +438,104 @@ async function addEnvFiles() {
   }
 }
 
+// Create authenticated axios instance for server calls
+function createAuthenticatedAxios() {
+  const session = sessionManager.getCurrentUser();
+  if (!session?.token) {
+    throw new Error("No valid token found. Please login again.");
+  }
+
+  return axios.create({
+    baseURL: SERVER_URL,
+    timeout: 10000,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`,
+    },
+  });
+}
+
+// Sync only specific files that were just pushed (performance optimization)
+async function syncSpecificFiles(projectId, pushedFiles) {
+  try {
+    const currentUser = sessionManager.getCurrentUser();
+    if (!currentUser) {
+      throw new Error("Not logged in");
+    }
+
+    // Get project info
+    const project = dbOps.getProjectById(projectId);
+    if (!project.success) {
+      throw new Error("Project not found");
+    }
+
+    const api = createAuthenticatedAxios();
+
+    for (const pushedFile of pushedFiles) {
+      // Get the env file record from database
+      const envFile = dbOps.getEnvFileByProjectAndName(
+        projectId,
+        pushedFile.name
+      );
+      if (!envFile.success) {
+        continue; // Skip if not found
+      }
+
+      // Sync the env file to server
+      const syncData = {
+        user_email: currentUser.email,
+        project_name: project.project.name,
+        file_name: envFile.envFile.name,
+        encrypted_content: envFile.envFile.encrypted_content,
+        iv: envFile.envFile.iv,
+        tag: envFile.envFile.tag,
+        created_at: envFile.envFile.createdAt,
+        updated_at: envFile.envFile.updatedAt,
+      };
+
+      await api.post("/env-files", syncData);
+
+      // Sync only unsynced versions for this specific file
+      const versionsResult = dbOps.getUnsyncedVersionHistory(
+        envFile.envFile.id
+      );
+      if (versionsResult.success && versionsResult.versions.length > 0) {
+        console.log(
+          chalk.cyan(
+            `Syncing ${versionsResult.versions.length} unsynced version(s) for ${envFile.envFile.name}`
+          )
+        );
+
+        for (const version of versionsResult.versions) {
+          const versionSyncData = {
+            user_email: currentUser.email,
+            project_name: project.project.name,
+            file_name: envFile.envFile.name,
+            version_token: version.version_token,
+            encrypted_content: version.encrypted_content,
+            iv: version.iv,
+            tag: version.tag,
+            commit_message: version.commit_message,
+            author_email: version.author_email,
+            created_at: version.createdAt,
+          };
+
+          await api.post("/env-versions", versionSyncData);
+          dbOps.markVersionAsSynced(version.version_token);
+        }
+
+        console.log(
+          chalk.green(
+            `✓ Successfully synced ${versionsResult.versions.length} new versions for ${envFile.envFile.name}`
+          )
+        );
+      }
+    }
+  } catch (error) {
+    throw new Error(`Sync failed: ${error.message}`);
+  }
+}
+
 async function pushStagedFiles() {
   console.log("Pushing staged files...\n");
 
@@ -504,8 +602,8 @@ async function pushStagedFiles() {
     console.log();
 
     try {
-      const { handleSync } = require("./commands/cloud");
-      await handleSync([]);
+      // Only sync the files that were just pushed, not all files
+      await syncSpecificFiles(stagedData.projectId, stagedData.files);
 
       console.log(
         chalk.green.bold("✓ Files pushed locally and synced to cloud")
@@ -610,6 +708,60 @@ async function syncPendingFiles() {
   }
 }
 
+// Function to automatically stage a reverted file for push
+async function stageRevertedFile(
+  envFileId,
+  projectId,
+  userEmail,
+  commitMessage
+) {
+  try {
+    // Get the env file info
+    const envFile = dbOps.getEnvFileById(envFileId);
+    if (!envFile.success) {
+      throw new Error("Environment file not found");
+    }
+
+    // Get project info
+    const project = dbOps.getProjectById(projectId);
+    if (!project.success) {
+      throw new Error("Project not found");
+    }
+
+    // Decrypt the current content to get the actual file content
+    const decryptedContent = decryptContent(
+      envFile.envFile.encrypted_content,
+      envFile.envFile.iv,
+      envFile.envFile.tag,
+      userEmail
+    );
+
+    // Create staging data
+    const stagedData = {
+      projectId: projectId,
+      projectName: project.project.name,
+      userEmail: userEmail,
+      commitMessage: commitMessage || "Reverted to previous version",
+      files: [
+        {
+          name: envFile.envFile.name,
+          path: path.join(process.cwd(), envFile.envFile.name),
+          content: decryptedContent,
+          size: decryptedContent.length,
+        },
+      ],
+      stagedAt: new Date().toISOString(),
+    };
+
+    // Save staging data
+    saveStagedFiles(stagedData);
+
+    return { success: true, fileName: envFile.envFile.name };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   addEnvFiles,
   pushStagedFiles,
@@ -617,4 +769,5 @@ module.exports = {
   scanEnvFiles,
   encryptContent,
   decryptContent,
+  stageRevertedFile,
 };

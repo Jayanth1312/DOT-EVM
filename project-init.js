@@ -3,9 +3,9 @@ const path = require("path");
 const chalk = require("chalk");
 const { createSimplePrompt } = require("./components/text-input");
 const { dbOps } = require("./db");
+const { requireAuth } = require("./commands/auth");
 
 async function scanForEnvFiles(directory = process.cwd()) {
-
   try {
     const files = fs.readdirSync(directory);
     const envFiles = files.filter(
@@ -13,7 +13,6 @@ async function scanForEnvFiles(directory = process.cwd()) {
         file.startsWith(".env") || file === ".env" || file.includes(".env.")
     );
     return envFiles;
-
   } catch (error) {
     console.error(chalk.red("Error scanning directory:"), error.message);
     return [];
@@ -24,41 +23,19 @@ async function initializeProject() {
   console.log(chalk.bold.cyan("Initializing new EVM project...\n"));
 
   try {
-    if (!dbOps.isLoggedIn()) {
-      console.error(
-        chalk.red("You must be logged in to initialize a project.")
-      );
-      console.log(
-        chalk.yellow(
-          "Run 'evm login' first or use 'evm' to access the launcher."
-        )
-      );
-      process.exit(1);
-    }
-
-    const currentUser = dbOps.getCurrentUser();
-    // console.log(chalk.blue(`Logged in as: ${currentUser.email}\n`));
-
+    // Use modern authentication in local-only mode for init
+    const currentUser = await requireAuth(true);
     const currentDirectory = process.cwd();
     const existingProject = dbOps.getProjectByUserAndDirectory(
-      currentUser.userId,
+      currentUser.id,
       currentDirectory
     );
 
     if (existingProject.success) {
-      console.error(
-        chalk.red(
-          `Project is already initialized`
-        )
-      );
-      console.log(
-        chalk.yellow(
-          `Use evm add`
-        )
-      );
+      console.error(chalk.red(`Project is already initialized`));
+      console.log(chalk.yellow(`Use evm add`));
       process.exit(1);
     }
-
 
     const projectName = await createSimplePrompt({
       title: "📦 EVM Project Setup",
@@ -74,9 +51,8 @@ async function initializeProject() {
         "Project name must be at least 2 characters and contain only letters, numbers, hyphens, underscores, and dots",
     });
 
-
     const createResult = dbOps.createProject(
-      currentUser.userId,
+      currentUser.id,
       projectName,
       "",
       process.cwd()
@@ -86,7 +62,6 @@ async function initializeProject() {
       console.error(chalk.red(`Database error: ${createResult.error}`));
       process.exit(1);
     }
-
 
     const envFiles = await scanForEnvFiles();
 
@@ -101,9 +76,7 @@ async function initializeProject() {
     const configPath = path.join(process.cwd(), ".evm-config.json");
     fs.writeFileSync(configPath, JSON.stringify(projectConfig, null, 2));
 
-    console.log(
-      chalk.whiteBright(`EVM project initialized`)
-    );
+    console.log(chalk.whiteBright(`EVM project initialized`));
 
     if (envFiles.length > 0) {
       console.log(chalk.yellow(`\nNext steps:`));
@@ -128,10 +101,7 @@ async function initializeProject() {
 
     return projectConfig;
   } catch (error) {
-    console.error(
-      chalk.red("Project initialization failed."),
-      error.message
-    );
+    console.error(chalk.red("Project initialization failed."), error.message);
     process.exit(1);
   }
 }

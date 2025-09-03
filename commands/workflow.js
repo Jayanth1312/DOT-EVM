@@ -472,7 +472,7 @@ function getTimeAgo(date) {
   }
 }
 
-function handleRevert(args) {
+async function handleRevert(args) {
   if (!args || args.length < 2) {
     console.log(chalk.red("Missing commit hash"));
     console.log(chalk.yellow("Usage: evm revert <commit-hash>"));
@@ -572,15 +572,67 @@ function handleRevert(args) {
       }
 
       console.log(chalk.gray(`Rollback reason: ${reason}`));
-      console.log(
-        chalk.yellow("\nFile has been reverted and new commit created")
-      );
-      console.log(
-        chalk.yellow('Use "evm log" to see the rollback at the top')
-      );
-      console.log(
-        chalk.yellow('Use "evm sync" to sync the rollback to cloud')
-      );
+
+      // Automatically stage the reverted file for push
+      try {
+        const { stageRevertedFile } = require("../env-manager");
+
+        // Get project info from the env file
+        const envFileStmt = db.db.prepare(
+          "SELECT * FROM env_files WHERE id = ?"
+        );
+        const envFileInfo = envFileStmt.get(targetVersion.env_file_id);
+
+        if (!envFileInfo) {
+          throw new Error("Environment file not found");
+        }
+
+        const stageResult = await stageRevertedFile(
+          targetVersion.env_file_id,
+          envFileInfo.project_id,
+          currentUser.email,
+          `Reverted to ${targetVersion.version_token.substring(
+            0,
+            8
+          )}: ${reason}`
+        );
+
+        if (stageResult.success) {
+          console.log(
+            chalk.green(
+              `\n✓ File ${stageResult.fileName} automatically staged for push`
+            )
+          );
+          console.log(
+            chalk.yellow.bold(
+              '\n📤 IMPORTANT: Run "evm push" to sync the revert to cloud'
+            )
+          );
+          console.log(
+            chalk.gray('💡 Use "evm log" to see the rollback in history')
+          );
+        } else {
+          console.log(
+            chalk.yellow(
+              `\n⚠️  Could not auto-stage file: ${stageResult.error}`
+            )
+          );
+          console.log(
+            chalk.yellow(
+              'Use "evm add" then "evm push" to sync the rollback to cloud'
+            )
+          );
+        }
+      } catch (error) {
+        console.log(
+          chalk.yellow(`\n⚠️  Could not auto-stage file: ${error.message}`)
+        );
+        console.log(
+          chalk.yellow(
+            'Use "evm add" then "evm push" to sync the rollback to cloud'
+          )
+        );
+      }
     } else {
       console.log(chalk.red(`Rollback failed: ${rollbackResult.error}`));
     }
@@ -604,9 +656,7 @@ function handleRollbackHistory(args) {
     const projectsResult = dbOps.getProjectsByUser(currentUser.userId);
 
     if (!projectsResult.success) {
-      console.log(
-        chalk.red(`Failed to get projects: ${projectsResult.error}`)
-      );
+      console.log(chalk.red(`Failed to get projects: ${projectsResult.error}`));
       return;
     }
 
@@ -673,17 +723,13 @@ function handleRollbackHistory(args) {
     if (totalRollbacks === 0) {
       console.log(chalk.yellow("No rollback history found"));
       console.log(
-        chalk.gray(
-          "Use 'evm revert <commit-hash>' to create rollback entries"
-        )
+        chalk.gray("Use 'evm revert <commit-hash>' to create rollback entries")
       );
     } else {
       console.log(chalk.green(`\nTotal rollbacks: ${totalRollbacks}`));
     }
   } catch (error) {
-    console.log(
-      chalk.red(`Failed to get rollback history: ${error.message}`)
-    );
+    console.log(chalk.red(`Failed to get rollback history: ${error.message}`));
   }
 }
 

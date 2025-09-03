@@ -98,11 +98,19 @@ function getCommandSuggestions(partialCommand) {
     ],
     login: [
       chalk.white("  evm login") +
-        chalk.gray("                  User login or registration"),
+        chalk.gray("                  User login (JWT/modern auth)"),
     ],
-    user: [
-      chalk.white("  evm user") +
-        chalk.gray("                   User login or registration"),
+    register: [
+      chalk.white("  evm register") +
+        chalk.gray("               User registration (JWT/modern auth)"),
+    ],
+    logout: [
+      chalk.white("  evm logout") +
+        chalk.gray("                 Logout current user"),
+    ],
+    whoami: [
+      chalk.white("  evm whoami") +
+        chalk.gray("                 Show current user info"),
     ],
   };
 
@@ -124,7 +132,12 @@ function getCommandSuggestions(partialCommand) {
 
 // Import command modules
 const { showHelp } = require("./commands/core");
-const { handleLogin } = require("./commands/auth");
+const {
+  handleLogin,
+  handleRegister,
+  handleLogout,
+  handleWhoami,
+} = require("./commands/auth");
 const {
   handleRename,
   handleProjectList,
@@ -138,16 +151,6 @@ const {
   handleRollbackHistory,
 } = require("./commands/workflow");
 const { handleSync, handlePull, handleClone } = require("./commands/cloud");
-const {
-  promptCredentials,
-  legacyLogin,
-  encryptPassword,
-} = require("./commands/legacy-auth");
-
-const publicKey = fs.readFileSync(
-  path.join(__dirname, "keys", "public.pem"),
-  "utf8"
-);
 
 const args = process.argv.slice(2);
 
@@ -203,6 +206,9 @@ async function dispatchRaw(cmd) {
   if (parts[0] === "evm") parts.shift();
   if (parts.length === 0) return;
   if (parts[0] === "login" || parts[0] === "user") return handleLogin([]);
+  if (parts[0] === "register") return handleRegister([]);
+  if (parts[0] === "logout") return handleLogout([]);
+  if (parts[0] === "whoami") return handleWhoami([]);
   if (parts[0] === "show" && (parts[1] === "user" || parts[1] === "users"))
     return showUsers();
   if (parts[0] === "init") {
@@ -239,7 +245,7 @@ if (args.length === 0) {
         typeof result === "object" &&
         result.type === "startLogin"
       ) {
-        return legacyLogin();
+        return handleLogin([]);
       } else {
         await dispatchRaw(result);
       }
@@ -250,6 +256,14 @@ if (args.length === 0) {
   })();
 } else if (args.length === 1 && args[0] === "user") {
   handleLogin([]);
+} else if (args.length === 1 && args[0] === "login") {
+  handleLogin([]);
+} else if (args.length === 1 && args[0] === "register") {
+  handleRegister([]);
+} else if (args.length === 1 && args[0] === "logout") {
+  handleLogout([]);
+} else if (args.length === 1 && args[0] === "whoami") {
+  handleWhoami([]);
 } else if (args.length === 1 && args[0] === "init") {
   initializeProject();
 } else if (args.length === 1 && args[0] === "add") {

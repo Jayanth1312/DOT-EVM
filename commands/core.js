@@ -34,10 +34,10 @@ function showHelp() {
         "                   Commit staged changes to local database and cloud"
       )
   );
-  console.log(
-    chalk.white("  evm pull") +
-      chalk.gray("                   Pull environment data from database")
-  );
+  // console.log(
+  //   chalk.white("  evm pull") +
+  //     chalk.gray("                   Pull environment data from database")
+  // );
   console.log(
     chalk.white("  evm status") +
       chalk.gray("                 Show status of changed files")
@@ -80,18 +80,18 @@ function showHelp() {
     chalk.white("  evm <proj> -l") +
       chalk.gray("              List files in specific project")
   );
-  console.log(
-    chalk.white("  evm clone") +
-      chalk.gray("                  Clone a project from database")
-  );
-  console.log(
-    chalk.white("  evm rename <name>") +
-      chalk.gray("          Rename current project")
-  );
-  console.log(
-    chalk.white("  evm rename <proj> <file>") +
-      chalk.gray("   Rename environment file")
-  );
+  // console.log(
+  //   chalk.white("  evm clone") +
+  //     chalk.gray("                  Clone a project from database")
+  // );
+  // console.log(
+  //   chalk.white("  evm rename <name>") +
+  //     chalk.gray("          Rename current project")
+  // );
+  // console.log(
+  //   chalk.white("  evm rename <proj> <file>") +
+  //     chalk.gray("   Rename environment file")
+  // );
   console.log(
     chalk.white("  evm rm <project>") +
       chalk.gray("           Remove project locally")
@@ -142,12 +142,12 @@ function showHelp() {
   console.log(
     chalk.gray("  evm myproject list           # List files in 'myproject'")
   );
-  console.log(
-    chalk.gray("  evm rename newname           # Rename current project")
-  );
-  console.log(
-    chalk.gray("  evm rename myproj .env.prod  # Rename file in project")
-  );
+  // console.log(
+  //   chalk.gray("  evm rename newname           # Rename current project")
+  // );
+  // console.log(
+  //   chalk.gray("  evm rename myproj .env.prod  # Rename file in project")
+  // );
   console.log(
     chalk.gray("  evm log                      # View commit history")
   );

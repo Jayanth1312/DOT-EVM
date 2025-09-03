@@ -3,22 +3,33 @@ const axios = require("axios");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { dbOps } = require("../db");
+const { dbOps, sessionManager } = require("../db");
 const { decryptContent } = require("../env-manager");
 
-// Get current user session
+// Get current user session with token
 const getCurrentUser = () => {
-  const sessionPath = path.join(__dirname, "../.evm-session.json");
-  if (!fs.existsSync(sessionPath)) {
+  const session = sessionManager.getCurrentUser();
+  if (!session) {
     throw new Error("Not logged in. Please run 'evm login' first.");
   }
+  return session;
+};
 
-  try {
-    const sessionData = JSON.parse(fs.readFileSync(sessionPath, "utf8"));
-    return sessionData;
-  } catch (error) {
-    throw new Error("Invalid session data. Please login again.");
+// Create axios instance with JWT authentication
+const createAuthenticatedAxios = () => {
+  const session = sessionManager.getCurrentUser();
+  if (!session?.token) {
+    throw new Error("No valid token found. Please login again.");
   }
+
+  return axios.create({
+    baseURL: "http://localhost:4000",
+    timeout: 10000,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`,
+    },
+  });
 };
 
 // Hash content for integrity checking
@@ -51,13 +62,9 @@ async function handleSync(args) {
 
       // Check if there are projects in the cloud that can be pulled
       try {
-        const response = await axios.get(
-          `http://localhost:4000/projects?user_email=${encodeURIComponent(
-            currentUser.email
-          )}`,
-          {
-            timeout: 10000,
-          }
+        const api = createAuthenticatedAxios();
+        const response = await api.get(
+          `/projects?user_email=${encodeURIComponent(currentUser.email)}`
         );
 
         if (
@@ -123,6 +130,9 @@ async function handleSync(args) {
     let totalSynced = 0;
     let totalErrors = 0;
 
+    // Create authenticated axios instance for all server calls
+    const api = createAuthenticatedAxios();
+
     // Sync each project
     for (const project of projects) {
       try {
@@ -165,16 +175,7 @@ async function handleSync(args) {
               updated_at: envFile.updatedAt, // Local uses updatedAt, cloud expects updated_at
             };
 
-            const response = await axios.post(
-              "http://localhost:4000/env-files",
-              syncData,
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                timeout: 10000,
-              }
-            );
+            const response = await api.post("/env-files", syncData);
 
             if (response.data.success) {
               // Wait a moment to ensure the env file is properly saved before syncing versions
@@ -214,15 +215,9 @@ async function handleSync(args) {
                       created_at: version.createdAt,
                     };
 
-                    const versionResponse = await axios.post(
-                      "http://localhost:4000/env-versions",
-                      versionSyncData,
-                      {
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        timeout: 10000,
-                      }
+                    const versionResponse = await api.post(
+                      "/env-versions",
+                      versionSyncData
                     );
 
                     if (versionResponse.data.success) {
@@ -304,16 +299,9 @@ async function handleSync(args) {
                       created_at: rollback.createdAt,
                     };
 
-
-                    const rollbackResponse = await axios.post(
-                      "http://localhost:4000/rollback-history",
-                      rollbackSyncData,
-                      {
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        timeout: 10000,
-                      }
+                    const rollbackResponse = await api.post(
+                      "/rollback-history",
+                      rollbackSyncData
                     );
 
                     if (rollbackResponse.data.success) {

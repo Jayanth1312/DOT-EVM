@@ -9,14 +9,31 @@ const db = new Database(path.join(__dirname, "evm.db"));
 const SESSION_FILE = path.join(__dirname, ".evm-session.json");
 
 const sessionManager = {
-  setCurrentUser(userEmail, userId) {
+  setCurrentUser(userEmail, userId, token = null, refreshToken = null) {
     const sessionData = {
       email: userEmail,
       userId: userId,
+      token: token,
+      refreshToken: refreshToken,
       loginTime: new Date().toISOString(),
+      isOnline: token !== null,
     };
     fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionData, null, 2));
-    console.log(`Session created for user: ${userEmail}`);
+    // console.log(
+    //   `Session created for user: ${userEmail}${
+    //     token ? " (online)" : " (offline)"
+    //   }`
+    // );
+  },
+
+  updateTokens(token, refreshToken) {
+    const currentSession = this.getCurrentUser();
+    if (currentSession) {
+      currentSession.token = token;
+      currentSession.refreshToken = refreshToken;
+      currentSession.isOnline = true;
+      fs.writeFileSync(SESSION_FILE, JSON.stringify(currentSession, null, 2));
+    }
   },
 
   getCurrentUser() {
@@ -34,12 +51,26 @@ const sessionManager = {
   clearSession() {
     if (fs.existsSync(SESSION_FILE)) {
       fs.unlinkSync(SESSION_FILE);
-      console.log("Session cleared");
     }
   },
 
   isLoggedIn() {
     return this.getCurrentUser() !== null;
+  },
+
+  isOnline() {
+    const session = this.getCurrentUser();
+    return session?.isOnline || false;
+  },
+
+  getToken() {
+    const session = this.getCurrentUser();
+    return session?.token;
+  },
+
+  getRefreshToken() {
+    const session = this.getCurrentUser();
+    return session?.refreshToken;
   },
 };
 
@@ -223,6 +254,9 @@ const statements = {
   getProjectsByUser: db.prepare(`
     SELECT * FROM projects WHERE user_id = ?
   `),
+  getProjectById: db.prepare(`
+    SELECT * FROM projects WHERE id = ?
+  `),
   getProjectByUserAndName: db.prepare(`
     SELECT * FROM projects WHERE user_id = ? AND name = ?
   `),
@@ -362,6 +396,17 @@ const dbOps = {
     }
   },
 
+  getProjectById(projectId) {
+    try {
+      const project = statements.getProjectById.get(projectId);
+      return project
+        ? { success: true, project }
+        : { success: false, error: "Project not found" };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
   getProjectByUserAndDirectory(userId, directoryPath) {
     try {
       const project = statements.getProjectByUserAndDirectory.get(
@@ -448,6 +493,17 @@ const dbOps = {
     try {
       const envFiles = statements.getEnvFilesByProject.all(projectId);
       return { success: true, envFiles };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  getEnvFileById(envFileId) {
+    try {
+      const envFile = statements.getEnvFileById.get(envFileId);
+      return envFile
+        ? { success: true, envFile }
+        : { success: false, error: "Environment file not found" };
     } catch (error) {
       return { success: false, error: error.message };
     }

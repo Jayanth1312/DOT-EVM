@@ -2,115 +2,253 @@ require("dotenv").config();
 const express = require("express");
 const { neon } = require("@neondatabase/serverless");
 const chalk = require("chalk");
-const crypto = require("crypto");
-const fs = require("fs");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const cors = require("cors");
 
 const sql = neon(process.env.DATABASE_URL);
 const app = express();
 
-const privateKey = fs.readFileSync("../keys/private.pem", "utf8");
+// JWT Configuration
+const JWT_SECRET =
+  process.env.JWT_SECRET || "evm-default-secret-change-in-production";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
+const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || "7d";
 
+// Middleware
+app.use(cors());
 app.use(express.json());
 
-app.post("/register", async (req, res) => {
+// JWT Utilities
+const generateTokens = (userId, email) => {
+  const payload = { userId, email };
+
+  const token = jwt.sign(payload, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN,
+    issuer: "evm-cli",
+  });
+
+  const refreshToken = jwt.sign(payload, JWT_SECRET, {
+    expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+    issuer: "evm-cli",
+  });
+
+  return { token, refreshToken };
+};
+
+const verifyToken = (token) => {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    return null;
+  }
+};
+
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: "Access token required" });
+  }
+
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: "Token expired" });
+  }
+
+  req.user = decoded;
+  next();
+};
+
+// Store for refresh tokens (in production, use Redis or database)
+const refreshTokens = new Set();
+
+// Auth Routes
+
+// Register
+app.post("/auth/register", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    let decryptedPassword;
-    try {
-      decryptedPassword = crypto
-        .privateDecrypt(privateKey, Buffer.from(password, "base64"))
-        .toString();
-    } catch (e) {
-      return res.status(400).json({ error: "Password decryption failed" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
     }
 
-    const hashedPassword = await bcrypt.hash(decryptedPassword, 10);
-
-    await sql`
-      INSERT INTO users (email, password)
-      VALUES (${email}, ${hashedPassword})
+    // Check if user already exists
+    const existingUser = await sql`
+      SELECT id FROM users WHERE email = ${email}
     `;
 
-    res.json({ success: true, message: "User registered!" });
+    if (existingUser.length > 0) {
+      return res.status(409).json({ error: "User already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    const result = await sql`
+      INSERT INTO users (email, password, created_at)
+      VALUES (${email}, ${hashedPassword}, NOW())
+      RETURNING id, email, created_at
+    `;
+
+    const user = result[0];
+    const { token, refreshToken } = generateTokens(user.id, user.email);
+
+    // Store refresh token
+    refreshTokens.add(refreshToken);
+
+    console.log(chalk.green(`[SUCCESS] User registered: ${email}`));
+
+    res.status(201).json({
+      success: true,
+      message: "User registered successfully",
+      user: {
+        id: user.id,
+        email: user.email,
+        createdAt: user.created_at,
+      },
+      token,
+      refreshToken,
+    });
   } catch (err) {
     console.error(chalk.red("[ERROR] Registration failed:"), err);
     res.status(500).json({ error: "Registration failed" });
   }
 });
 
-app.post("/login", async (req, res) => {
+// Login
+app.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    let decryptedPassword;
-    try {
-      decryptedPassword = crypto
-        .privateDecrypt(privateKey, Buffer.from(password, "base64"))
-        .toString();
-    } catch (e) {
-      return res.status(400).json({ error: "Password decryption failed" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
     }
 
     const result = await sql`
-      SELECT * FROM users WHERE email = ${email}
+      SELECT id, email, password, created_at FROM users WHERE email = ${email}
     `;
 
-    console.log(
-      chalk.yellow(
-        `[DEBUG] User lookup for ${email}: Found ${result.length} users`
-      )
-    );
-
     if (result.length === 0) {
-      console.log(chalk.yellow("[DEBUG] User not found, auto-registering..."));
-      try {
-        const hashedPassword = await bcrypt.hash(decryptedPassword, 10);
-        await sql`
-          INSERT INTO users (email, password)
-          VALUES (${email}, ${hashedPassword})
-        `;
-        console.log(chalk.green("[SUCCESS] User auto-registered successfully"));
-        return res.json({
-          success: true,
-          message: "User registered and logged in!",
-        });
-      } catch (registerErr) {
-        console.error(
-          chalk.red("[ERROR] Auto-registration failed:"),
-          registerErr
-        );
-        return res.status(500).json({ error: "Registration failed" });
-      }
-    }
-
-    const user = result[0];
-    console.log(
-      chalk.yellow(`[DEBUG] Comparing decrypted password with bcrypt hash`)
-    );
-
-    const isPasswordValid = await bcrypt.compare(
-      decryptedPassword,
-      user.password
-    );
-
-    if (!isPasswordValid) {
-      console.log(
-        chalk.red("[DEBUG] Password mismatch - sending invalid credentials")
-      );
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    console.log(chalk.green("[SUCCESS] Password match - login successful"));
+    const user = result[0];
+    const isPasswordValid = await bcrypt.compare(password, user.password);
 
-    res.json({ success: true, message: "Login successful!" });
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // Update last login (only if column exists)
+    try {
+      await sql`
+        UPDATE users SET last_login = NOW() WHERE id = ${user.id}
+      `;
+    } catch (error) {
+      // Column might not exist, that's okay for now
+      console.log(
+        chalk.yellow(
+          "[WARNING] Could not update last_login - column may not exist"
+        )
+      );
+    }
+
+    const { token, refreshToken } = generateTokens(user.id, user.email);
+
+    // Store refresh token
+    refreshTokens.add(refreshToken);
+
+    console.log(chalk.green(`[SUCCESS] User logged in: ${email}`));
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      user: {
+        id: user.id,
+        email: user.email,
+        createdAt: user.created_at,
+      },
+      token,
+      refreshToken,
+    });
   } catch (err) {
     console.error(chalk.red("[ERROR] Login failed:"), err);
     res.status(500).json({ error: "Login failed" });
   }
 });
 
+// Refresh Token
+app.post("/auth/refresh", (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(401).json({ error: "Refresh token required" });
+  }
+
+  if (!refreshTokens.has(refreshToken)) {
+    return res.status(403).json({ error: "Invalid refresh token" });
+  }
+
+  const decoded = verifyToken(refreshToken);
+  if (!decoded) {
+    refreshTokens.delete(refreshToken);
+    return res.status(403).json({ error: "Invalid refresh token" });
+  }
+
+  // Generate new tokens
+  const { token, refreshToken: newRefreshToken } = generateTokens(
+    decoded.userId,
+    decoded.email
+  );
+
+  // Remove old refresh token and add new one
+  refreshTokens.delete(refreshToken);
+  refreshTokens.add(newRefreshToken);
+
+  res.json({
+    success: true,
+    token,
+    refreshToken: newRefreshToken,
+  });
+});
+
+// Logout
+app.post("/auth/logout", authenticateToken, (req, res) => {
+  // Remove refresh token if provided
+  const { refreshToken } = req.body;
+  if (refreshToken) {
+    refreshTokens.delete(refreshToken);
+  }
+
+  console.log(chalk.blue(`[INFO] User logged out: ${req.user.email}`));
+  res.json({ success: true, message: "Logged out successfully" });
+});
+
+// Get current user
+app.get("/auth/me", authenticateToken, async (req, res) => {
+  try {
+    const result = await sql`
+      SELECT id, email, created_at FROM users WHERE id = ${req.user.userId}
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      user: result[0],
+    });
+  } catch (err) {
+    console.error(chalk.red("[ERROR] Failed to fetch user:"), err);
+    res.status(500).json({ error: "Failed to fetch user" });
+  }
+});
+
+// Backward compatibility endpoint for older clients
 app.get("/user", async (req, res) => {
   try {
     const { email } = req.query;
@@ -120,7 +258,7 @@ app.get("/user", async (req, res) => {
     }
 
     const result = await sql`
-      SELECT * FROM users WHERE email = ${email}
+      SELECT id, email, created_at FROM users WHERE email = ${email}
     `;
 
     if (result.length === 0) {
@@ -139,11 +277,12 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Protected endpoints - Environment file operations
+
 // Sync environment files endpoint
-app.post("/env-files", async (req, res) => {
+app.post("/env-files", authenticateToken, async (req, res) => {
   try {
     const {
-      user_email,
       project_name,
       file_name,
       encrypted_content,
@@ -153,20 +292,12 @@ app.post("/env-files", async (req, res) => {
       updated_at,
     } = req.body;
 
+    const user_email = req.user.email; // Get from JWT token
+    const userId = req.user.userId; // Get from JWT token
+
     console.log(
       chalk.yellow(`[SYNC] Syncing ${file_name} for user ${user_email}`)
     );
-
-    // First, get the user ID
-    const userResult = await sql`
-      SELECT id FROM users WHERE email = ${user_email}
-    `;
-
-    if (userResult.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userId = userResult[0].id;
 
     // Check if project exists, create if not
     let projectResult = await sql`
@@ -177,8 +308,8 @@ app.post("/env-files", async (req, res) => {
     if (projectResult.length === 0) {
       console.log(chalk.yellow(`[SYNC] Creating new project: ${project_name}`));
       const newProject = await sql`
-        INSERT INTO projects (user_id, name)
-        VALUES (${userId}, ${project_name})
+        INSERT INTO projects (user_id, name, created_at)
+        VALUES (${userId}, ${project_name}, NOW())
         RETURNING id
       `;
       projectId = newProject[0].id;
@@ -223,8 +354,8 @@ app.post("/env-files", async (req, res) => {
             VALUES (${projectId}, ${file_name}, ${encrypted_content}, ${iv}, ${tag}, ${created_at}, ${updated_at})
           `
           : sql`
-            INSERT INTO env_files (project_id, name, encrypted_content, iv, tag)
-            VALUES (${projectId}, ${file_name}, ${encrypted_content}, ${iv}, ${tag})
+            INSERT INTO env_files (project_id, name, encrypted_content, iv, tag, created_at, updated_at)
+            VALUES (${projectId}, ${file_name}, ${encrypted_content}, ${iv}, ${tag}, NOW(), NOW())
           `;
 
       await insertQuery;
@@ -239,10 +370,9 @@ app.post("/env-files", async (req, res) => {
 });
 
 // Sync environment file versions endpoint
-app.post("/env-versions", async (req, res) => {
+app.post("/env-versions", authenticateToken, async (req, res) => {
   try {
     const {
-      user_email,
       project_name,
       file_name,
       version_token,
@@ -254,22 +384,14 @@ app.post("/env-versions", async (req, res) => {
       created_at,
     } = req.body;
 
+    const user_email = req.user.email; // Get from JWT token
+    const userId = req.user.userId; // Get from JWT token
+
     console.log(
       chalk.yellow(
         `[VERSION] Syncing version ${version_token} for ${file_name} (user: ${user_email})`
       )
     );
-
-    // First, get the user ID
-    const userResult = await sql`
-      SELECT id FROM users WHERE email = ${user_email}
-    `;
-
-    if (userResult.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userId = userResult[0].id;
 
     // Get project ID
     const projectResult = await sql`
@@ -320,7 +442,7 @@ app.post("/env-versions", async (req, res) => {
           ${tag},
           ${commit_message},
           ${author_email},
-          ${created_at}
+          ${created_at || "NOW()"}
         )
       `;
       console.log(
@@ -342,10 +464,9 @@ app.post("/env-versions", async (req, res) => {
 });
 
 // Sync rollback history endpoint
-app.post("/rollback-history", async (req, res) => {
+app.post("/rollback-history", authenticateToken, async (req, res) => {
   try {
     const {
-      user_email,
       project_name,
       file_name,
       from_version_token,
@@ -355,22 +476,14 @@ app.post("/rollback-history", async (req, res) => {
       created_at,
     } = req.body;
 
+    const user_email = req.user.email; // Get from JWT token
+    const userId = req.user.userId; // Get from JWT token
+
     console.log(
       chalk.yellow(
         `[ROLLBACK] Syncing rollback from ${from_version_token} to ${to_version_token} for ${file_name} (user: ${user_email})`
       )
     );
-
-    // First, get the user ID
-    const userResult = await sql`
-      SELECT id FROM users WHERE email = ${user_email}
-    `;
-
-    if (userResult.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userId = userResult[0].id;
 
     // Get project ID
     const projectResult = await sql`
@@ -420,7 +533,7 @@ app.post("/rollback-history", async (req, res) => {
           ${to_version_token},
           ${reason},
           ${performed_by},
-          ${created_at}
+          ${created_at || "NOW()"}
         )
       `;
       console.log(
@@ -445,26 +558,18 @@ app.post("/rollback-history", async (req, res) => {
 });
 
 // Delete project endpoint
-app.delete("/projects", async (req, res) => {
+app.delete("/projects", authenticateToken, async (req, res) => {
   try {
-    const { user_email, project_name } = req.body;
+    const { project_name } = req.body;
+
+    const user_email = req.user.email; // Get from JWT token
+    const userId = req.user.userId; // Get from JWT token
 
     console.log(
       chalk.yellow(
         `[DELETE] Deleting project "${project_name}" for user ${user_email}`
       )
     );
-
-    // Get user ID
-    const userResult = await sql`
-      SELECT id FROM users WHERE email = ${user_email}
-    `;
-
-    if (userResult.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userId = userResult[0].id;
 
     // Get project ID
     const projectResult = await sql`
@@ -506,26 +611,18 @@ app.delete("/projects", async (req, res) => {
 });
 
 // Delete env file endpoint
-app.delete("/env-files", async (req, res) => {
+app.delete("/env-files", authenticateToken, async (req, res) => {
   try {
-    const { user_email, project_name, file_name } = req.body;
+    const { project_name, file_name } = req.body;
+
+    const user_email = req.user.email; // Get from JWT token
+    const userId = req.user.userId; // Get from JWT token
 
     console.log(
       chalk.yellow(
         `[DELETE] Deleting file "${file_name}" from project "${project_name}" for user ${user_email}`
       )
     );
-
-    // Get user ID
-    const userResult = await sql`
-      SELECT id FROM users WHERE email = ${user_email}
-    `;
-
-    if (userResult.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userId = userResult[0].id;
 
     // Get project ID
     const projectResult = await sql`
@@ -569,10 +666,14 @@ app.delete("/env-files", async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT || 3000, () => {
+// Start server
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
   console.log(
-    chalk.green(
-      `[SERVER] Running on http://localhost:${process.env.PORT || 3000}`
-    )
+    chalk.green(`[SERVER] EVM Server running on http://localhost:${PORT}`)
+  );
+  console.log(chalk.blue(`[INFO] JWT Authentication enabled`));
+  console.log(
+    chalk.yellow(`[SECURITY] Remember to set JWT_SECRET in production!`)
   );
 });

@@ -1,5 +1,5 @@
 const chalk = require("chalk");
-const { dbOps } = require("../db");
+const { dbOps, sessionManager } = require("../db");
 const { createSimplePrompt } = require("../components/text-input");
 const axios = require("axios");
 const fs = require("fs");
@@ -45,18 +45,32 @@ function removeConfig() {
   }
 }
 
+// Create authenticated axios instance for server calls
+function createAuthenticatedAxios() {
+  const session = sessionManager.getCurrentUser();
+  if (!session?.token) {
+    throw new Error("No valid token found. Please login again.");
+  }
+
+  return axios.create({
+    baseURL: "http://localhost:4000",
+    timeout: 10000,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`,
+    },
+  });
+}
+
 // Cloud deletion functions
 async function deleteProjectFromCloud(userEmail, projectName) {
   try {
-    const response = await axios.delete("http://localhost:4000/projects", {
+    const api = createAuthenticatedAxios();
+    const response = await api.delete("/projects", {
       data: {
         user_email: userEmail,
         project_name: projectName,
       },
-      headers: {
-        "Content-Type": "application/json",
-      },
-      timeout: 10000,
     });
 
     return { success: true, data: response.data };
@@ -77,16 +91,13 @@ async function deleteProjectFromCloud(userEmail, projectName) {
 
 async function deleteFileFromCloud(userEmail, projectName, fileName) {
   try {
-    const response = await axios.delete("http://localhost:4000/env-files", {
+    const api = createAuthenticatedAxios();
+    const response = await api.delete("/env-files", {
       data: {
         user_email: userEmail,
         project_name: projectName,
         file_name: fileName,
       },
-      headers: {
-        "Content-Type": "application/json",
-      },
-      timeout: 10000,
     });
 
     return { success: true, data: response.data };
