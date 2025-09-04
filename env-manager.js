@@ -530,6 +530,40 @@ async function syncSpecificFiles(projectId, pushedFiles) {
           )
         );
       }
+
+      // Sync rollback history for this specific file
+      const rollbackResult = dbOps.getUnsyncedRollbackHistory(
+        envFile.envFile.id
+      );
+      if (rollbackResult.success && rollbackResult.rollbacks.length > 0) {
+        console.log(
+          chalk.cyan(
+            `Syncing ${rollbackResult.rollbacks.length} unsynced rollback(s) for ${envFile.envFile.name}`
+          )
+        );
+
+        for (const rollback of rollbackResult.rollbacks) {
+          const rollbackSyncData = {
+            user_email: currentUser.email,
+            project_name: project.project.name,
+            file_name: envFile.envFile.name,
+            from_version_token: rollback.from_version_token,
+            to_version_token: rollback.to_version_token,
+            reason: rollback.rollback_reason,
+            performed_by: rollback.performed_by,
+            created_at: rollback.createdAt,
+          };
+
+          await api.post("/rollback-history", rollbackSyncData);
+          dbOps.markRollbackAsSynced(rollback.id);
+        }
+
+        console.log(
+          chalk.green(
+            `✓ Successfully synced ${rollbackResult.rollbacks.length} rollback history entries for ${envFile.envFile.name}`
+          )
+        );
+      }
     }
   } catch (error) {
     throw new Error(`Sync failed: ${error.message}`);
@@ -560,40 +594,48 @@ async function pushStagedFiles() {
 
     let successCount = 0;
 
-    for (const file of stagedData.files) {
-      try {
-        const encrypted = encryptContent(file.content, stagedData.userEmail);
-        const versionToken = dbOps.generateVersionToken();
+    // Check if this is a revert - if so, skip version creation
+    if (stagedData.isRevert) {
+      console.log(
+        chalk.cyan("Detected revert staging - skipping local version creation")
+      );
+      successCount = stagedData.files.length;
+    } else {
+      for (const file of stagedData.files) {
+        try {
+          const encrypted = encryptContent(file.content, stagedData.userEmail);
+          const versionToken = dbOps.generateVersionToken();
 
-        const envFileResult = dbOps.createOrUpdateEnvFile(
-          stagedData.projectId,
-          file.name,
-          encrypted.encryptedContent,
-          encrypted.iv,
-          encrypted.tag
-        );
-
-        if (envFileResult.success) {
-          const versionResult = dbOps.createEnvVersion(
-            envFileResult.envFileId,
-            versionToken,
+          const envFileResult = dbOps.createOrUpdateEnvFile(
+            stagedData.projectId,
+            file.name,
             encrypted.encryptedContent,
             encrypted.iv,
-            encrypted.tag,
-            stagedData.commitMessage,
-            stagedData.userEmail
+            encrypted.tag
           );
 
-          if (versionResult.success) {
-            successCount++;
+          if (envFileResult.success) {
+            const versionResult = dbOps.createEnvVersion(
+              envFileResult.envFileId,
+              versionToken,
+              encrypted.encryptedContent,
+              encrypted.iv,
+              encrypted.tag,
+              stagedData.commitMessage,
+              stagedData.userEmail
+            );
+
+            if (versionResult.success) {
+              successCount++;
+            } else {
+              console.log(`Failed to create version for ${file.name}`);
+            }
           } else {
-            console.log(`Failed to create version for ${file.name}`);
+            console.log(`Failed to commit ${file.name}`);
           }
-        } else {
-          console.log(`Failed to commit ${file.name}`);
+        } catch (error) {
+          console.log(`Error processing ${file.name}: ${error.message}`);
         }
-      } catch (error) {
-        console.log(`Error processing ${file.name}: ${error.message}`);
       }
     }
 
@@ -613,6 +655,10 @@ async function pushStagedFiles() {
         chalk.yellow("\nLocal push successful, but cloud sync failed:")
       );
       console.log(chalk.gray(`   Error: ${syncError.message}`));
+      // Check for JWT expiration
+      if (syncError.response?.status === 401 || syncError.message.includes("Token expired") || syncError.message.includes("No valid token found")) {
+        console.log(chalk.yellow("Login to use cloud operations"));
+      }
       console.log(
         chalk.cyan("   You can manually sync later using 'evm sync'")
       );
@@ -685,11 +731,19 @@ async function syncPendingFiles() {
                 totalSynced++;
               } else {
                 console.log(`${envFile.name} sync failed: ${cloudSync.error}`);
+                // Check for JWT expiration
+                if (cloudSync.error && (cloudSync.error.includes("Token expired") || cloudSync.error.includes("401"))) {
+                  console.log(chalk.yellow("Login to use cloud operations"));
+                }
                 totalFailed++;
               }
             }
           } catch (error) {
             console.log(`${envFile.name} sync error: ${error.message}`);
+            // Check for JWT expiration
+            if (error.response?.status === 401 || error.message.includes("Token expired") || error.message.includes("No valid token found")) {
+              console.log(chalk.yellow("Login to use cloud operations"));
+            }
             totalFailed++;
           }
         }
@@ -742,6 +796,7 @@ async function stageRevertedFile(
       projectName: project.project.name,
       userEmail: userEmail,
       commitMessage: commitMessage || "Reverted to previous version",
+      isRevert: true, // Flag to indicate this is a revert
       files: [
         {
           name: envFile.envFile.name,

@@ -82,6 +82,14 @@ async function deleteProjectFromCloud(userEmail, projectName) {
         offline: true,
       };
     }
+    // Check for JWT expiration
+    if (error.response?.status === 401 || error.response?.data?.error === "Token expired") {
+      return {
+        success: false,
+        error: "Login to use cloud operations",
+        jwtExpired: true,
+      };
+    }
     return {
       success: false,
       error: error.response?.data?.error || error.message,
@@ -107,6 +115,14 @@ async function deleteFileFromCloud(userEmail, projectName, fileName) {
         success: false,
         error: "Cloud server not available",
         offline: true,
+      };
+    }
+    // Check for JWT expiration
+    if (error.response?.status === 401 || error.response?.data?.error === "Token expired") {
+      return {
+        success: false,
+        error: "Login to use cloud operations",
+        jwtExpired: true,
       };
     }
     return {
@@ -500,8 +516,8 @@ async function handleRemove(args) {
 
       if (forceFlag) {
         // Try to delete from cloud when --force is used
-        try {
-          await deleteProjectFromCloud(currentUser.email, projectName);
+        const cloudDeleteResult = await deleteProjectFromCloud(currentUser.email, projectName);
+        if (cloudDeleteResult.success) {
           console.log(
             chalk.green(`Project "${projectName}" deleted from cloud`)
           );
@@ -510,17 +526,21 @@ async function handleRemove(args) {
               "All associated files, versions, and history have been removed from both local and cloud"
             )
           );
-        } catch (error) {
-          console.log(
-            chalk.yellow(
-              `Warning: Could not delete from cloud (offline?): ${error.message}`
-            )
-          );
-          console.log(
-            chalk.gray(
-              "   Project deleted locally but cloud deletion failed. Try again when online."
-            )
-          );
+        } else {
+          if (cloudDeleteResult.jwtExpired || cloudDeleteResult.error === "Login to use cloud operations") {
+            console.log(chalk.yellow("Login to use cloud operations"));
+          } else {
+            console.log(
+              chalk.yellow(
+                `Warning: Could not delete from cloud (offline?): ${cloudDeleteResult.error}`
+              )
+            );
+            console.log(
+              chalk.gray(
+                "   Project deleted locally but cloud deletion failed. Try again when online."
+              )
+            );
+          }
         }
       } else {
         console.log(
@@ -640,25 +660,29 @@ async function handleRemove(args) {
 
       if (forceFlag) {
         // Try to delete from cloud when --force is used
-        try {
-          await deleteFileFromCloud(currentUser.email, projectName, fileName);
+        const cloudDeleteResult = await deleteFileFromCloud(currentUser.email, projectName, fileName);
+        if (cloudDeleteResult.success) {
           console.log(chalk.green(`File "${fileName}" deleted from cloud`));
           console.log(
             chalk.gray(
               "All associated versions and history have been removed from both local and cloud"
             )
           );
-        } catch (error) {
-          console.log(
-            chalk.yellow(
-              `Warning: Could not delete from cloud (offline?): ${error.message}`
-            )
-          );
-          console.log(
-            chalk.gray(
-              "   File deleted locally but cloud deletion failed. Try again when online."
-            )
-          );
+        } else {
+          if (cloudDeleteResult.jwtExpired || cloudDeleteResult.error === "Login to use cloud operations") {
+            console.log(chalk.yellow("Login to use cloud operations"));
+          } else {
+            console.log(
+              chalk.yellow(
+                `Warning: Could not delete from cloud (offline?): ${cloudDeleteResult.error}`
+              )
+            );
+            console.log(
+              chalk.gray(
+                "   File deleted locally but cloud deletion failed. Try again when online."
+              )
+            );
+          }
         }
       } else {
         // Note that the file is only deleted locally

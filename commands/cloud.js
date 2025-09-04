@@ -242,6 +242,10 @@ async function handleSync(args) {
                         `⚠ Could not sync version ${version.version_token}: ${errorMsg}`
                       )
                     );
+                    // Check for JWT expiration
+                    if (versionSyncError.response?.status === 401 || errorMsg.includes("Token expired")) {
+                      console.log(chalk.yellow("Login to use cloud operations"));
+                    }
                     versionErrorCount++;
                   }
                 }
@@ -326,6 +330,10 @@ async function handleSync(args) {
                         `⚠ Could not sync rollback ${rollback.id}: ${errorMsg}`
                       )
                     );
+                    // Check for JWT expiration
+                    if (rollbackSyncError.response?.status === 401 || errorMsg.includes("Token expired")) {
+                      console.log(chalk.yellow("Login to use cloud operations"));
+                    }
                     rollbackErrorCount++;
                   }
                 }
@@ -383,6 +391,8 @@ async function handleSync(args) {
 
     if (error.message.includes("Not logged in")) {
       console.log(chalk.yellow("Run 'evm login' to authenticate first"));
+    } else if (error.response?.status === 401 || error.message.includes("Token expired") || error.message.includes("No valid token found")) {
+      console.log(chalk.yellow("Login to use cloud operations"));
     } else if (error.code === "ECONNREFUSED") {
       console.log(
         chalk.yellow("Make sure the server is running on localhost:4000")
