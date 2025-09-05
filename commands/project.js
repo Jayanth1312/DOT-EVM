@@ -1,13 +1,14 @@
 const chalk = require("chalk");
 const { dbOps, sessionManager } = require("../db");
 const { createSimplePrompt } = require("../components/text-input");
+const { configManager } = require("../config");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
 // Config file management functions
 function getConfigPath() {
-  return path.join(process.cwd(), ".evm-config.json");
+  return configManager.getProjectConfigPath();
 }
 
 function readConfig() {
@@ -83,7 +84,10 @@ async function deleteProjectFromCloud(userEmail, projectName) {
       };
     }
     // Check for JWT expiration
-    if (error.response?.status === 401 || error.response?.data?.error === "Token expired") {
+    if (
+      error.response?.status === 401 ||
+      error.response?.data?.error === "Token expired"
+    ) {
       return {
         success: false,
         error: "Login to use cloud operations",
@@ -118,7 +122,10 @@ async function deleteFileFromCloud(userEmail, projectName, fileName) {
       };
     }
     // Check for JWT expiration
-    if (error.response?.status === 401 || error.response?.data?.error === "Token expired") {
+    if (
+      error.response?.status === 401 ||
+      error.response?.data?.error === "Token expired"
+    ) {
       return {
         success: false,
         error: "Login to use cloud operations",
@@ -516,7 +523,10 @@ async function handleRemove(args) {
 
       if (forceFlag) {
         // Try to delete from cloud when --force is used
-        const cloudDeleteResult = await deleteProjectFromCloud(currentUser.email, projectName);
+        const cloudDeleteResult = await deleteProjectFromCloud(
+          currentUser.email,
+          projectName
+        );
         if (cloudDeleteResult.success) {
           console.log(
             chalk.green(`Project "${projectName}" deleted from cloud`)
@@ -527,7 +537,10 @@ async function handleRemove(args) {
             )
           );
         } else {
-          if (cloudDeleteResult.jwtExpired || cloudDeleteResult.error === "Login to use cloud operations") {
+          if (
+            cloudDeleteResult.jwtExpired ||
+            cloudDeleteResult.error === "Login to use cloud operations"
+          ) {
             console.log(chalk.yellow("Login to use cloud operations"));
           } else {
             console.log(
@@ -660,7 +673,11 @@ async function handleRemove(args) {
 
       if (forceFlag) {
         // Try to delete from cloud when --force is used
-        const cloudDeleteResult = await deleteFileFromCloud(currentUser.email, projectName, fileName);
+        const cloudDeleteResult = await deleteFileFromCloud(
+          currentUser.email,
+          projectName,
+          fileName
+        );
         if (cloudDeleteResult.success) {
           console.log(chalk.green(`File "${fileName}" deleted from cloud`));
           console.log(
@@ -669,7 +686,10 @@ async function handleRemove(args) {
             )
           );
         } else {
-          if (cloudDeleteResult.jwtExpired || cloudDeleteResult.error === "Login to use cloud operations") {
+          if (
+            cloudDeleteResult.jwtExpired ||
+            cloudDeleteResult.error === "Login to use cloud operations"
+          ) {
             console.log(chalk.yellow("Login to use cloud operations"));
           } else {
             console.log(

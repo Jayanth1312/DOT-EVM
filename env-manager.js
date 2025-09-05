@@ -4,15 +4,17 @@ const crypto = require("crypto");
 const axios = require("axios");
 const { createTextBox } = require("./components/text-input");
 const { dbOps, sessionManager } = require("./db");
+const { configManager } = require("./config");
 const chalk = require("chalk");
 
 const ALGORITHM = "aes-256-gcm";
 const KEY_LENGTH = 32;
-const SERVER_URL = "http://localhost:4000";
 
 async function checkServerConnectivity() {
   try {
-    await axios.get(`${SERVER_URL}/health`, { timeout: 3000 });
+    await axios.get(`${configManager.getServerUrl()}/health`, {
+      timeout: 3000,
+    });
     return true;
   } catch (error) {
     return false;
@@ -22,7 +24,7 @@ async function checkServerConnectivity() {
 async function syncToCloud(fileData, userEmail) {
   try {
     const response = await axios.post(
-      `${SERVER_URL}/env-files`,
+      `${configManager.getServerUrl()}/env-files`,
       {
         user_email: userEmail,
         project_name: fileData.projectName,
@@ -39,13 +41,20 @@ async function syncToCloud(fileData, userEmail) {
   }
 }
 
-function generateEncryptionKey(userEmail) {
-  return crypto.pbkdf2Sync(userEmail, "evm-salt", 100000, KEY_LENGTH, "sha256");
+function generateEncryptionKey(userEmail, userSalt) {
+  if (!userSalt) {
+    // Get user's salt from database
+    userSalt = dbOps.getUserEncryptionSalt(userEmail);
+    if (!userSalt) {
+      throw new Error(`No encryption salt found for user: ${userEmail}`);
+    }
+  }
+  return crypto.pbkdf2Sync(userEmail, userSalt, 100000, KEY_LENGTH, "sha256");
 }
 
-function encryptContent(content, userEmail) {
+function encryptContent(content, userEmail, userSalt = null) {
   try {
-    const key = generateEncryptionKey(userEmail);
+    const key = generateEncryptionKey(userEmail, userSalt);
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
     cipher.setAAD(Buffer.from(userEmail));
@@ -100,11 +109,13 @@ async function hasFileChanged(projectId, fileName, currentContent, userEmail) {
 
     // Decrypt the latest version and compare
     const latestVersion = versions.versions[0];
+    const userSalt = dbOps.getUserEncryptionSalt(userEmail);
     const decryptedContent = decryptContent(
       latestVersion.encrypted_content,
       latestVersion.iv,
       latestVersion.tag,
-      userEmail
+      userEmail,
+      userSalt
     );
 
     return currentContent !== decryptedContent;
@@ -113,9 +124,9 @@ async function hasFileChanged(projectId, fileName, currentContent, userEmail) {
   }
 }
 
-function decryptContent(encryptedContent, iv, tag, userEmail) {
+function decryptContent(encryptedContent, iv, tag, userEmail, userSalt = null) {
   try {
-    const key = generateEncryptionKey(userEmail);
+    const key = generateEncryptionKey(userEmail, userSalt);
     const decipher = crypto.createDecipheriv(
       "aes-256-gcm",
       key,
@@ -134,12 +145,12 @@ function decryptContent(encryptedContent, iv, tag, userEmail) {
 }
 
 function saveStagedFiles(stagedFiles) {
-  const stagingPath = path.join(process.cwd(), ".evm-staging.json");
+  const stagingPath = configManager.getProjectStagingPath();
   fs.writeFileSync(stagingPath, JSON.stringify(stagedFiles, null, 2));
 }
 
 function loadStagedFiles() {
-  const stagingPath = path.join(process.cwd(), ".evm-staging.json");
+  const stagingPath = configManager.getProjectStagingPath();
   if (!fs.existsSync(stagingPath)) {
     return null;
   }
@@ -151,7 +162,7 @@ function loadStagedFiles() {
 }
 
 function clearStagingArea() {
-  const stagingPath = path.join(process.cwd(), ".evm-staging.json");
+  const stagingPath = configManager.getProjectStagingPath();
   if (fs.existsSync(stagingPath)) {
     fs.unlinkSync(stagingPath);
   }
@@ -446,7 +457,7 @@ function createAuthenticatedAxios() {
   }
 
   return axios.create({
-    baseURL: SERVER_URL,
+    baseURL: configManager.getServerUrl(),
     timeout: 10000,
     headers: {
       "Content-Type": "application/json",
@@ -656,7 +667,11 @@ async function pushStagedFiles() {
       );
       console.log(chalk.gray(`   Error: ${syncError.message}`));
       // Check for JWT expiration
-      if (syncError.response?.status === 401 || syncError.message.includes("Token expired") || syncError.message.includes("No valid token found")) {
+      if (
+        syncError.response?.status === 401 ||
+        syncError.message.includes("Token expired") ||
+        syncError.message.includes("No valid token found")
+      ) {
         console.log(chalk.yellow("Login to use cloud operations"));
       }
       console.log(
@@ -732,7 +747,11 @@ async function syncPendingFiles() {
               } else {
                 console.log(`${envFile.name} sync failed: ${cloudSync.error}`);
                 // Check for JWT expiration
-                if (cloudSync.error && (cloudSync.error.includes("Token expired") || cloudSync.error.includes("401"))) {
+                if (
+                  cloudSync.error &&
+                  (cloudSync.error.includes("Token expired") ||
+                    cloudSync.error.includes("401"))
+                ) {
                   console.log(chalk.yellow("Login to use cloud operations"));
                 }
                 totalFailed++;
@@ -741,7 +760,11 @@ async function syncPendingFiles() {
           } catch (error) {
             console.log(`${envFile.name} sync error: ${error.message}`);
             // Check for JWT expiration
-            if (error.response?.status === 401 || error.message.includes("Token expired") || error.message.includes("No valid token found")) {
+            if (
+              error.response?.status === 401 ||
+              error.message.includes("Token expired") ||
+              error.message.includes("No valid token found")
+            ) {
               console.log(chalk.yellow("Login to use cloud operations"));
             }
             totalFailed++;
@@ -783,11 +806,13 @@ async function stageRevertedFile(
     }
 
     // Decrypt the current content to get the actual file content
+    const userSalt = dbOps.getUserEncryptionSalt(userEmail);
     const decryptedContent = decryptContent(
       envFile.envFile.encrypted_content,
       envFile.envFile.iv,
       envFile.envFile.tag,
-      userEmail
+      userEmail,
+      userSalt
     );
 
     // Create staging data

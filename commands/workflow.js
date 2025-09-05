@@ -70,11 +70,13 @@ async function handleStatus() {
           const latestVersion = versions.versions[0];
 
           try {
+            const userSalt = dbOps.getUserEncryptionSalt(currentUser.email);
             const decryptedContent = decryptContent(
               latestVersion.encrypted_content,
               latestVersion.iv,
               latestVersion.tag,
-              currentUser.email
+              currentUser.email,
+              userSalt
             );
 
             if (currentContent.trim() === decryptedContent.trim()) {
@@ -202,11 +204,13 @@ async function handleDiff(args) {
 
           try {
             // Use the proper decryption function
+            const userSalt = dbOps.getUserEncryptionSalt(currentUser.email);
             const decryptedContent = decryptContent(
               latestVersion.encrypted_content,
               latestVersion.iv,
               latestVersion.tag,
-              currentUser.email
+              currentUser.email,
+              userSalt
             );
 
             if (currentContent.trim() === decryptedContent.trim()) {

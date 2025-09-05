@@ -87,9 +87,13 @@ app.post("/auth/register", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
+    // Generate a unique salt for encryption
+    const crypto = require("crypto");
+    const encryptionSalt = crypto.randomBytes(32).toString("hex");
+
     const result = await sql`
-      INSERT INTO users (email, password, created_at)
-      VALUES (${email}, ${hashedPassword}, NOW())
+      INSERT INTO users (email, password, encryption_salt, created_at)
+      VALUES (${email}, ${hashedPassword}, ${encryptionSalt}, NOW())
       RETURNING id, email, created_at
     `;
 

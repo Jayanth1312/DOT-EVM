@@ -2,11 +2,12 @@ const Database = require("better-sqlite3");
 const bcrypt = require("bcrypt");
 const path = require("path");
 const fs = require("fs");
+const { configManager } = require("./config");
 
-const db = new Database(path.join(__dirname, "evm.db"));
+const db = new Database(configManager.getDatabasePath());
 
 // Session management - store current user
-const SESSION_FILE = path.join(__dirname, ".evm-session.json");
+const SESSION_FILE = configManager.getSessionPath();
 
 const sessionManager = {
   setCurrentUser(userEmail, userId, token = null, refreshToken = null) {
@@ -79,6 +80,9 @@ function migrateDatabase() {
     const tableInfo = db.pragma("table_info(users)");
     const hasUsername = tableInfo.some((col) => col.name === "username");
     const hasEmail = tableInfo.some((col) => col.name === "email");
+    const hasEncryptionSalt = tableInfo.some(
+      (col) => col.name === "encryption_salt"
+    );
 
     if (hasUsername && !hasEmail) {
       console.log("Migrating database schema from username to email...");
@@ -91,6 +95,7 @@ function migrateDatabase() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           email TEXT UNIQUE NOT NULL,
           passwordHash TEXT NOT NULL,
+          encryption_salt TEXT NOT NULL,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
           lastLogin DATETIME,
           syncedToServer BOOLEAN DEFAULT 0
@@ -106,12 +111,53 @@ function migrateDatabase() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           email TEXT UNIQUE NOT NULL,
           passwordHash TEXT NOT NULL,
+          encryption_salt TEXT NOT NULL,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
           lastLogin DATETIME,
           syncedToServer BOOLEAN DEFAULT 0
         )
       `
       ).run();
+    } else if (hasEmail && !hasEncryptionSalt) {
+      // Add encryption_salt column for existing users
+      console.log("Adding encryption_salt column for existing users...");
+      db.prepare("ALTER TABLE users ADD COLUMN encryption_salt TEXT").run();
+
+      // Generate salt for existing users
+      const crypto = require("crypto");
+      const existingUsers = db
+        .prepare("SELECT id, email FROM users WHERE encryption_salt IS NULL")
+        .all();
+      const updateSalt = db.prepare(
+        "UPDATE users SET encryption_salt = ? WHERE id = ?"
+      );
+
+      for (const user of existingUsers) {
+        const salt = crypto.randomBytes(32).toString("hex");
+        updateSalt.run(salt, user.id);
+        console.log(`Generated encryption salt for user: ${user.email}`);
+      }
+
+      // Make the column NOT NULL after populating
+      db.prepare(
+        `
+        CREATE TABLE users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT UNIQUE NOT NULL,
+          passwordHash TEXT NOT NULL,
+          encryption_salt TEXT NOT NULL,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          lastLogin DATETIME,
+          syncedToServer BOOLEAN DEFAULT 0
+        )
+      `
+      ).run();
+
+      db.prepare("INSERT INTO users_new SELECT * FROM users").run();
+      db.prepare("DROP TABLE users").run();
+      db.prepare("ALTER TABLE users_new RENAME TO users").run();
+
+      console.log("Encryption salt migration completed!");
     }
   } catch (error) {
     console.error("Migration error:", error.message);
@@ -227,8 +273,8 @@ migrateDatabase();
 
 const statements = {
   insertUser: db.prepare(`
-    INSERT INTO users (email, passwordHash, syncedToServer)
-    VALUES (?, ?, ?)
+    INSERT INTO users (email, passwordHash, encryption_salt, syncedToServer)
+    VALUES (?, ?, ?, ?)
   `),
   getUserByEmail: db.prepare(`
     SELECT * FROM users WHERE email = ?
@@ -667,11 +713,13 @@ const dbOps = {
       try {
         const currentUser = sessionManager.getCurrentUser();
         if (currentUser) {
+          const userSalt = this.getUserEncryptionSalt(currentUser.email);
           const decryptedContent = decryptContent(
             targetVersion.encrypted_content,
             targetVersion.iv,
             targetVersion.tag,
-            currentUser.email
+            currentUser.email,
+            userSalt
           );
 
           fs.writeFileSync(envFile.name, decryptedContent, "utf8");
@@ -700,13 +748,17 @@ const dbOps = {
 
   async createUser(email, plainPassword, syncedToServer = false) {
     try {
+      const crypto = require("crypto");
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
+      const encryptionSalt = crypto.randomBytes(32).toString("hex");
+
       const result = statements.insertUser.run(
         email,
         hashedPassword,
+        encryptionSalt,
         syncedToServer ? 1 : 0
       );
-      return { success: true, userId: result.lastInsertRowid };
+      return { success: true, userId: result.lastInsertRowid, encryptionSalt };
     } catch (error) {
       if (error.code === "SQLITE_CONSTRAINT_UNIQUE") {
         return { success: false, error: "User already exists locally" };
@@ -748,6 +800,11 @@ const dbOps = {
     return statements.getUserByEmail.get(email);
   },
 
+  getUserEncryptionSalt(email) {
+    const user = statements.getUserByEmail.get(email);
+    return user ? user.encryption_salt : null;
+  },
+
   markAsSynced(email) {
     statements.updateSyncStatus.run(email);
   },
@@ -772,6 +829,17 @@ const dbOps = {
   // Project management operations
   getCurrentProject(userId) {
     try {
+      // First try to find project by current directory
+      const currentDir = process.cwd();
+      const projectByDir = statements.getProjectByUserAndDirectory.get(
+        userId,
+        currentDir
+      );
+      if (projectByDir) {
+        return { success: true, project: projectByDir };
+      }
+
+      // Fallback to first project if no directory match
       const project = statements.getProjectsByUser.get(userId);
       if (project) {
         return { success: true, project };

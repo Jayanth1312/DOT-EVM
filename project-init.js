@@ -4,6 +4,7 @@ const chalk = require("chalk");
 const { createSimplePrompt } = require("./components/text-input");
 const { dbOps } = require("./db");
 const { requireAuth } = require("./commands/auth");
+const { configManager } = require("./config");
 
 async function scanForEnvFiles(directory = process.cwd()) {
   try {
@@ -73,7 +74,7 @@ async function initializeProject() {
       variables: [],
     };
 
-    const configPath = path.join(process.cwd(), ".evm-config.json");
+    const configPath = configManager.getProjectConfigPath();
     fs.writeFileSync(configPath, JSON.stringify(projectConfig, null, 2));
 
     console.log(chalk.whiteBright(`EVM project initialized`));

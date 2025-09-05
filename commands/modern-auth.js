@@ -2,10 +2,10 @@ const chalk = require("chalk");
 const axios = require("axios");
 const jwt = require("jsonwebtoken");
 const { dbOps, sessionManager } = require("../db");
+const { configManager } = require("../config");
 const loginUI = require("../login-ui");
 
 // Configuration
-const SERVER_URL = process.env.EVM_SERVER_URL || "http://localhost:4000";
 const JWT_SECRET =
   process.env.JWT_SECRET || "evm-default-secret-change-in-production";
 
@@ -15,7 +15,7 @@ const JWT_SECRET =
 class ModernAuth {
   constructor() {
     this.axiosInstance = axios.create({
-      baseURL: SERVER_URL,
+      baseURL: configManager.getServerUrl(),
       timeout: 10000,
       headers: {
         "Content-Type": "application/json",
@@ -382,5 +382,4 @@ class ModernAuth {
 module.exports = {
   ModernAuth,
   JWT_SECRET,
-  SERVER_URL,
 };
