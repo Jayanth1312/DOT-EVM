@@ -29,7 +29,7 @@ function getCommandSuggestions(partialCommand) {
         chalk.gray(" Remove file (local + cloud)"),
     ],
     rename: [
-      chalk.white("  evm rename <name>") +
+      chalk.white("  evm rename <proj>") +
         chalk.gray("          Rename current project"),
       chalk.white("  evm rename <proj> <file>") +
         chalk.gray("   Rename environment file"),

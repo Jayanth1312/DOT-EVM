@@ -1,14 +1,33 @@
 {
   "name": "evm-cli",
   "version": "1.0.0",
-  "description": "",
+  "description": "Environment Variable Manager - A CLI tool for managing and synchronizing environment files with encryption",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "postinstall": "node setup.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "cli",
+    "environment",
+    "env",
+    "config",
+    "dotenv",
+    "encryption",
+    "sync",
+    "cloud"
+  ],
+  "author": "Jayanth1312",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jayanth1312/DOT-EVM.git"
+  },
+  "homepage": "https://github.com/Jayanth1312/DOT-EVM#readme",
+  "bugs": {
+    "url": "https://github.com/Jayanth1312/DOT-EVM/issues"
+  },
   "type": "commonjs",
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",
