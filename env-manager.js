@@ -168,6 +168,72 @@ function clearStagingArea() {
   }
 }
 
+async function promptCommitMessage() {
+  return new Promise(async (resolve) => {
+    let hasResolved = false;
+    const ReactModule = await import("react");
+    const React = ReactModule.default || ReactModule;
+    const ink = await import("ink");
+    const TextInputModule = await import("ink-text-input");
+    const TextInput = TextInputModule.default || TextInputModule;
+
+    const { render, Box, Text } = ink;
+    const { useState } = React;
+
+    const App = ({ onSubmit }) => {
+      const [inputValue, setInputValue] = useState("");
+
+      const submit = () => {
+        if (!hasResolved) {
+          hasResolved = true;
+          onSubmit(inputValue.trim() || "Updated environment files");
+        }
+      };
+
+      return React.createElement(
+        Box,
+        { flexDirection: "column" },
+
+        createTextBox(React, Text, Box, TextInput, {
+          width: 60,
+          placeholder: "Enter commit message (optional)",
+          value: inputValue,
+          onChange: setInputValue,
+          onSubmit: submit,
+          borderColor: "gray",
+          isActive: true,
+        }),
+
+        React.createElement(
+          Box,
+          { marginTop: 1 },
+          React.createElement(
+            Text,
+            { color: "gray" },
+            "Enter to submit commit message"
+          )
+        )
+      );
+    };
+
+    const instance = render(
+      React.createElement(App, {
+        onSubmit: (commitMessage) => {
+          try {
+            instance.unmount();
+            resolve(commitMessage);
+          } catch (error) {
+            if (!hasResolved) {
+              hasResolved = true;
+              resolve(commitMessage);
+            }
+          }
+        },
+      })
+    );
+  });
+}
+
 async function promptFileSelectionAndCommit(envFiles) {
   return new Promise(async (resolve) => {
     let hasResolved = false;
@@ -188,7 +254,7 @@ async function promptFileSelectionAndCommit(envFiles) {
       const getCurrentPlaceholder = () => {
         switch (currentStep) {
           case "fileSelection":
-            return "Enter file numbers (e.g., 1,2,3 or 'all')";
+            return "Enter file numbers (e.g., 1,2,3 or 'all' or '.')";
           case "commitMessage":
             return "Enter commit message (optional)";
           default:
@@ -197,7 +263,7 @@ async function promptFileSelectionAndCommit(envFiles) {
       };
 
       const validateFileSelection = (value) => {
-        if (value.toLowerCase() === "all") return true;
+        if (value.toLowerCase() === "all" || value === ".") return true;
         const nums = value.split(",").map((n) => parseInt(n.trim()));
         return nums.every((num) => num >= 1 && num <= envFiles.length);
       };
@@ -360,7 +426,7 @@ async function selectProject(userId) {
   });
 }
 
-async function addEnvFiles() {
+async function addEnvFiles(args = []) {
   console.log("Staging environment files for EVM...\n");
 
   try {
@@ -370,7 +436,27 @@ async function addEnvFiles() {
     }
 
     const currentUser = dbOps.getCurrentUser();
-    const project = await selectProject(currentUser.userId);
+
+    // First try to get current project by directory
+    const currentProjectResult = dbOps.getCurrentProject(currentUser.userId);
+    let project;
+
+    if (currentProjectResult.success) {
+      project = currentProjectResult.project;
+      console.log(
+        chalk.green(
+          `✓ Using project: ${project.name} (${project.directory_path})`
+        )
+      );
+    } else {
+      // Fallback to project selection if no current project found
+      console.log(
+        chalk.yellow(
+          "No project found in current directory. Please select a project:"
+        )
+      );
+      project = await selectProject(currentUser.userId);
+    }
     const envFiles = await scanEnvFiles();
 
     if (envFiles.length === 0) {
@@ -406,12 +492,20 @@ async function addEnvFiles() {
     });
     console.log();
 
-    const { fileSelection, commitMessage } = await promptFileSelectionAndCommit(
-      changedFiles
-    );
+    // Check if user passed "." argument to stage all files automatically
+    let fileSelection, commitMessage;
+    if (args.includes(".")) {
+      console.log(chalk.cyan("Auto-staging all changed files..."));
+      fileSelection = "all";
+      commitMessage = await promptCommitMessage();
+    } else {
+      const result = await promptFileSelectionAndCommit(changedFiles);
+      fileSelection = result.fileSelection;
+      commitMessage = result.commitMessage;
+    }
 
     let selectedFiles;
-    if (fileSelection.toLowerCase() === "all") {
+    if (fileSelection.toLowerCase() === "all" || fileSelection === ".") {
       selectedFiles = changedFiles;
     } else {
       const indices = fileSelection
@@ -535,11 +629,12 @@ async function syncSpecificFiles(projectId, pushedFiles) {
           dbOps.markVersionAsSynced(version.version_token);
         }
 
-        console.log(
-          chalk.green(
-            `✓ Successfully synced ${versionsResult.versions.length} new versions for ${envFile.envFile.name}`
-          )
-        );
+        console
+          .log
+          // chalk.green(
+          //   `✓ Successfully synced ${versionsResult.versions.length} new versions for ${envFile.envFile.name}`
+          // )
+          ();
       }
 
       // Sync rollback history for this specific file

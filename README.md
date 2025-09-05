@@ -108,16 +108,9 @@ evm-cli/                  # CLI source
 - bcrypt password hashing
 - User-specific encryption salts
 
-## 📚 More Info
-
-- [Full Documentation](https://github.com/Jayanth1312/DOT-EVM)
-- [API Reference](./evm-server/README.md)
-- [Contributing Guidelines](./CONTRIBUTING.md)
-
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
----
 
 **Built with ❤️ using Node.js, SQLite, PostgreSQL, and Express**

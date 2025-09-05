@@ -18,11 +18,11 @@ function showHelp() {
     chalk.white("  evm register") +
       chalk.gray("                 User registration")
   );
-    console.log(
-      chalk.white("  evm whoami") +
-        chalk.gray("                   Logged in user info")
+  console.log(
+    chalk.white("  evm whoami") +
+      chalk.gray("                   Logged in user info")
   );
-    console.log(
+  console.log(
     chalk.white("  evm logout") +
       chalk.gray("                   Logout current user")
   );
@@ -39,6 +39,10 @@ function showHelp() {
   console.log(
     chalk.white("  evm add") +
       chalk.gray("                      Stage environment files for commit")
+  );
+  console.log(
+    chalk.white("  evm add .") +
+      chalk.gray("                    Stage all changed files for commit")
   );
   console.log(
     chalk.white("  evm push") +
@@ -129,7 +133,12 @@ function showHelp() {
     chalk.gray("  evm init                     # Start a new project")
   );
   console.log(
-    chalk.gray("  evm add                      # Stage all changed .env files")
+    chalk.gray(
+      "  evm add                      # Stage changed .env files (interactive)"
+    )
+  );
+  console.log(
+    chalk.gray("  evm add .                    # Stage all changed .env files")
   );
   console.log(
     chalk.gray(
@@ -147,12 +156,12 @@ function showHelp() {
   console.log(
     chalk.gray("  evm myproject list           # List files in 'myproject'")
   );
-  // console.log(
-  //   chalk.gray("  evm rename newname           # Rename current project")
-  // );
-  // console.log(
-  //   chalk.gray("  evm rename myproj .env.prod  # Rename file in project")
-  // );
+  console.log(
+    chalk.gray("  evm rename newname           # Rename current project")
+  );
+  console.log(
+    chalk.gray("  evm rename myproj .env.prod  # Rename file in project")
+  );
   console.log(
     chalk.gray("  evm log                      # View commit history")
   );
@@ -160,17 +169,7 @@ function showHelp() {
     chalk.gray("  evm revert abc123            # Rollback to commit abc123")
   );
   console.log(
-    chalk.gray("  evm rollback history         # View rollback history")
-  );
-
-  console.log(
-    chalk.yellow.bold("\nNOTE:") +
-      chalk.gray(" Some commands are not yet implemented.")
-  );
-  console.log(
-    chalk.gray(
-      "For more information, visit: https://github.com/Jayanth1312/EVM\n"
-    )
+    chalk.gray("  evm rollback history         # View rollback history\n")
   );
 }
 

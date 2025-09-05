@@ -405,7 +405,7 @@ async function handleSync(args) {
 }
 
 async function handlePull(args) {
-  console.log(chalk.blue("⬇ull from Cloud - Coming Soon!"));
+  console.log(chalk.blue("⬇ Pull from Cloud - Coming Soon!"));
   console.log(
     chalk.gray("This feature will pull the latest changes from the cloud.")
   );

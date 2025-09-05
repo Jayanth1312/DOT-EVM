@@ -87,6 +87,8 @@ function getCommandSuggestions(partialCommand) {
     add: [
       chalk.white("  evm add") +
         chalk.gray("                    Stage environment files for commit"),
+      chalk.white("  evm add .") +
+        chalk.gray("                  Stage all changed files for commit"),
     ],
     status: [
       chalk.white("  evm status") +
@@ -215,7 +217,7 @@ async function dispatchRaw(cmd) {
     return initializeProject();
   }
   if (parts[0] === "add") {
-    return addEnvFiles();
+    return addEnvFiles(parts.slice(1));
   }
   if (parts[0] === "commit") {
     console.log(chalk.green("[INFO] Commit created (stub)"));
@@ -268,6 +270,8 @@ if (args.length === 0) {
   initializeProject();
 } else if (args.length === 1 && args[0] === "add") {
   addEnvFiles();
+} else if (args.length === 2 && args[0] === "add" && args[1] === ".") {
+  addEnvFiles(["."]);
 } else if (args.length === 1 && args[0] === "push") {
   pushStagedFiles();
 } else if (args.length === 1 && args[0] === "sync") {
