@@ -50,10 +50,10 @@ function showHelp() {
         "                     Commit staged changes to local database and cloud"
       )
   );
-  // console.log(
-  //   chalk.white("  evm pull") +
-  //     chalk.gray("                   Pull environment data from database")
-  // );
+  console.log(
+    chalk.white("  evm pull") +
+      chalk.gray("                     Pull missing files from cloud")
+  );
   console.log(
     chalk.white("  evm status") +
       chalk.gray("                   Show status of changed files")
@@ -78,15 +78,15 @@ function showHelp() {
         "                     Manually sync local files to cloud (optional)"
       )
   );
+  console.log(
+    chalk.white("  evm pending") +
+      chalk.gray("                  Show pending operations queued for sync")
+  );
 
   console.log(chalk.green.bold("\nPROJECT MANAGEMENT"));
   console.log(
     chalk.white("  evm list") +
       chalk.gray("                     List files in current project")
-  );
-  console.log(
-    chalk.white("  evm <proj> list") +
-      chalk.gray("              List files in specific project")
   );
   console.log(
     chalk.white("  evm list --all") +
@@ -95,25 +95,17 @@ function showHelp() {
       )
   );
 
-  // console.log(
-  //   chalk.white("  evm clone") +
-  //     chalk.gray("                  Clone a project from database")
-  // );
-  console.log(
-    chalk.white("  evm rename <name>") +
-      chalk.gray("            Rename current project")
-  );
   console.log(
     chalk.white("  evm rename <old> <new>") +
-      chalk.gray("     Rename environment file")
+      chalk.gray("       Rename project and environmental file")
   );
   console.log(
-    chalk.white("  evm rm <filename>") +
-      chalk.gray("           Remove file from current project")
+    chalk.white("  evm rm <name>") +
+      chalk.gray("                Remove files and project data from local database")
   );
   console.log(
-    chalk.white("  evm rm <filename> --force") +
-      chalk.gray("   Remove file (local + cloud)")
+    chalk.white("  evm rm <name> --force") +
+      chalk.gray("        Remove files and project data from (local + cloud)")
   );
 
   console.log(chalk.green.bold("\nVERSION CONTROL"));
@@ -124,6 +116,12 @@ function showHelp() {
   console.log(
     chalk.white("  evm rollback history") +
       chalk.gray("         View rollback history")
+  );
+
+  console.log(chalk.green.bold("\nADVANCED COMMANDS"));
+  console.log(
+    chalk.white("  evm clone") +
+      chalk.gray("                    Clone projects from cloud (coming soon)")
   );
 
   console.log(chalk.blue.bold("\nEXAMPLES:"));
@@ -144,9 +142,15 @@ function showHelp() {
     )
   );
   console.log(
+    chalk.gray("  evm pull                     # Pull missing files from cloud")
+  );
+  console.log(
     chalk.gray(
       "  evm sync                     # Manually sync files to cloud (optional)"
     )
+  );
+  console.log(
+    chalk.gray("  evm pending                  # Show pending operations")
   );
   console.log(
     chalk.gray("  evm list                     # List files in current project")
