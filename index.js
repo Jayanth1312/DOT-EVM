@@ -116,12 +116,12 @@ function getCommandSuggestions(partialCommand) {
     ],
   };
 
-  // Find exact matches first
+  // Finding exact matches first
   if (commandMap[partialCommand]) {
     return commandMap[partialCommand];
   }
 
-  // Find partial matches
+  // Finding partial matches
   const suggestions = [];
   for (const [command, options] of Object.entries(commandMap)) {
     if (command.startsWith(partialCommand)) {
@@ -305,7 +305,8 @@ if (args.length === 0) {
   handleRemove(args);
 } else if (
   (args.length === 1 && (args[0] === "list" || args[0] === "-l")) ||
-  (args.length === 2 && (args[1] === "list" || args[1] === "-l"))
+  (args.length === 2 && (args[1] === "list" || args[1] === "-l")) ||
+  (args.length === 2 && args[0] === "list" && args[1] === "--all")
 ) {
   handleProjectList(args);
 } else {

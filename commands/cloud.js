@@ -39,28 +39,21 @@ const hashContent = (content) => {
 
 async function handleSync(args) {
   try {
-    // console.log(chalk.blue("Starting cloud sync..."));
-
-    // Check if user is logged in
     const currentUser = getCurrentUser();
-    // console.log(chalk.cyan(`  Syncing as: ${currentUser.email}`));
 
-    const projectsResult = dbOps.getProjectsByUser(currentUser.userId);
+    const currentProjectResult = dbOps.getCurrentProject(currentUser.userId);
 
-    if (!projectsResult.success) {
-      console.log(
-        chalk.red(`  Failed to get projects: ${projectsResult.error}`)
-      );
+    if (!currentProjectResult.success) {
+      console.log(chalk.red("No active project found. Run 'evm init' first."));
       return;
     }
 
-    const projects = projectsResult.projects;
+    const project = currentProjectResult.project;
 
-    if (projects.length === 0) {
-      console.log(chalk.yellow("📭 No local projects found"));
-      console.log(chalk.cyan("🔍 Checking for projects in 1cloud..."));
+    if (!project) {
+      console.log(chalk.yellow("No local projects found"));
+      console.log(chalk.cyan("Checking for projects in 1cloud..."));
 
-      // Check if there are projects in the cloud that can be pulled
       try {
         const api = createAuthenticatedAxios();
         const response = await api.get(
@@ -74,10 +67,10 @@ async function handleSync(args) {
         ) {
           console.log(
             chalk.green(
-              `☁️  Found ${response.data.projects.length} project(s) in cloud!`
+              `Found ${response.data.projects.length} project(s) in cloud!`
             )
           );
-          console.log(chalk.yellow("\n💡 Available options:"));
+          console.log(chalk.yellow("\nAvailable options:"));
           console.log(
             chalk.white(
               "   1. Use 'evm pull' to download all projects from cloud"
@@ -94,7 +87,7 @@ async function handleSync(args) {
             )
           );
 
-          console.log(chalk.cyan("\n📋 Projects available in cloud:"));
+          console.log(chalk.cyan("\nProjects available in cloud:"));
           response.data.projects.forEach((project) => {
             const updatedDate = new Date(
               project.updated_at
@@ -106,292 +99,261 @@ async function handleSync(args) {
 
           return;
         } else {
-          console.log(chalk.gray("☁️  No projects found in cloud either"));
+          console.log(chalk.gray("No projects found in cloud either"));
           console.log(
             chalk.yellow(
-              "💡 Create your first project with 'evm init <project-name>'"
+              "Create your first project with 'evm init <project-name>'"
             )
           );
           return;
         }
       } catch (cloudError) {
-        console.log(chalk.yellow("⚠️  Could not check cloud projects"));
+        console.log(chalk.yellow("Could not check cloud projects"));
         console.log(
           chalk.gray(
-            "💡 Create a new project with 'evm init <project-name>' to start syncing"
+            "Create a new project with 'evm init <project-name>' to start syncing"
           )
         );
         return;
       }
     }
 
-    // console.log(chalk.cyan(`\nFound ${projects.length} project(s) to sync`));
-
-    let totalSynced = 0;
-    let totalErrors = 0;
-
-    // Create authenticated axios instance for all server calls
     const api = createAuthenticatedAxios();
 
-    // Sync each project
-    for (const project of projects) {
-      try {
-        // console.log(chalk.cyan(`\n  Syncing project: ${project.name}`));
+    try {
+      const envFilesResult = dbOps.getEnvFilesByProject(project.id);
 
-        const envFilesResult = dbOps.getEnvFilesByProject(project.id);
+      if (!envFilesResult.success) {
+        console.log(
+          chalk.red(`Failed to get env files: ${envFilesResult.error}`)
+        );
+        return;
+      }
 
-        if (!envFilesResult.success) {
-          console.log(
-            chalk.red(`  Failed to get env files: ${envFilesResult.error}`)
-          );
-          totalErrors++;
-          continue;
-        }
+      const envFiles = envFilesResult.envFiles;
 
-        const envFiles = envFilesResult.envFiles;
+      if (envFiles.length === 0) {
+        console.log(
+          chalk.gray(`No environment files in project ${project.name}`)
+        );
+        return;
+      }
 
-        if (envFiles.length === 0) {
-          console.log(
-            chalk.gray(`  No environment files in project ${project.name}`)
-          );
-          continue;
-        }
+      for (const envFile of envFiles) {
+        try {
+          const syncData = {
+            user_email: currentUser.email,
+            project_name: project.name,
+            file_name: envFile.name,
+            encrypted_content: envFile.encrypted_content,
+            iv: envFile.iv,
+            tag: envFile.tag,
+            created_at: envFile.createdAt,
+            updated_at: envFile.updatedAt,
+          };
 
-        // console.log(
-        //   chalk.cyan(`  Found ${envFiles.length} environment file(s)`)
-        // );
+          const response = await api.post("/env-files", syncData);
 
-        for (const envFile of envFiles) {
-          try {
-            // First sync the env file
-            const syncData = {
-              user_email: currentUser.email,
-              project_name: project.name,
-              file_name: envFile.name,
-              encrypted_content: envFile.encrypted_content,
-              iv: envFile.iv,
-              tag: envFile.tag,
-              created_at: envFile.createdAt, // Local uses createdAt, cloud expects created_at
-              updated_at: envFile.updatedAt, // Local uses updatedAt, cloud expects updated_at
-            };
+          if (response.data.success) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
 
-            const response = await api.post("/env-files", syncData);
+            const { dbOps } = require("../db");
+            const versionsResult = dbOps.getUnsyncedVersionHistory(envFile.id);
 
-            if (response.data.success) {
-              // Wait a moment to ensure the env file is properly saved before syncing versions
-              await new Promise((resolve) => setTimeout(resolve, 100));
-
-              // Now sync the version history for this file
-              const { dbOps } = require("../db");
-              const versionsResult = dbOps.getUnsyncedVersionHistory(
-                envFile.id
-              );
-
-              if (
-                versionsResult.success &&
-                versionsResult.versions.length > 0
-              ) {
-                console.log(
-                  chalk.cyan(
-                    `Syncing ${versionsResult.versions.length} unsynced version(s) for ${envFile.name}`
-                  )
-                );
-
-                let versionSyncedCount = 0;
-                let versionErrorCount = 0;
-
-                for (const version of versionsResult.versions) {
-                  try {
-                    const versionSyncData = {
-                      user_email: currentUser.email,
-                      project_name: project.name,
-                      file_name: envFile.name,
-                      version_token: version.version_token,
-                      encrypted_content: version.encrypted_content,
-                      iv: version.iv,
-                      tag: version.tag,
-                      commit_message: version.commit_message,
-                      author_email: version.author_email,
-                      created_at: version.createdAt,
-                    };
-
-                    const versionResponse = await api.post(
-                      "/env-versions",
-                      versionSyncData
-                    );
-
-                    if (versionResponse.data.success) {
-                      const markSyncResult = dbOps.markVersionAsSynced(
-                        version.version_token
-                      );
-                      versionSyncedCount++;
-                    } else {
-                      console.log(
-                        chalk.yellow(
-                          `⚠ Version sync failed: ${versionResponse.data.error}`
-                        )
-                      );
-                      versionErrorCount++;
-                    }
-                  } catch (versionSyncError) {
-                    const errorMsg =
-                      versionSyncError.response?.data?.error ||
-                      versionSyncError.message;
-                    console.log(
-                      chalk.yellow(
-                        `⚠ Could not sync version ${version.version_token}: ${errorMsg}`
-                      )
-                    );
-                    // Check for JWT expiration
-                    if (versionSyncError.response?.status === 401 || errorMsg.includes("Token expired")) {
-                      console.log(chalk.yellow("Login to use cloud operations"));
-                    }
-                    versionErrorCount++;
-                  }
-                }
-
-                if (versionSyncedCount > 0) {
-                  console.log(
-                    chalk.green(
-                      `✓ Successfully synced ${versionSyncedCount}/${versionsResult.versions.length} new versions`
-                    )
-                  );
-                }
-                if (versionErrorCount > 0) {
-                  console.log(
-                    chalk.yellow(
-                      `    ⚠ Failed to sync ${versionErrorCount} versions`
-                    )
-                  );
-                }
-              } else {
-                console.log(
-                  chalk.gray(
-                    `✓ All versions for ${envFile.name} are already synced`
-                  )
-                );
-              }
-
-              // Now sync rollback history for this file
-              const rollbackResult = dbOps.getUnsyncedRollbackHistory(
-                envFile.id
-              );
-
-              if (
-                rollbackResult.success &&
-                rollbackResult.rollbacks.length > 0
-              ) {
-                console.log(
-                  chalk.cyan(
-                    `Syncing ${rollbackResult.rollbacks.length} unsynced rollback(s) for ${envFile.name}`
-                  )
-                );
-
-                let rollbackSyncedCount = 0;
-                let rollbackErrorCount = 0;
-
-                for (const rollback of rollbackResult.rollbacks) {
-                  try {
-                    const rollbackSyncData = {
-                      user_email: currentUser.email,
-                      project_name: project.name,
-                      file_name: envFile.name,
-                      from_version_token: rollback.from_version_token,
-                      to_version_token: rollback.to_version_token,
-                      reason: rollback.rollback_reason,
-                      performed_by: rollback.performed_by,
-                      created_at: rollback.createdAt,
-                    };
-
-                    const rollbackResponse = await api.post(
-                      "/rollback-history",
-                      rollbackSyncData
-                    );
-
-                    if (rollbackResponse.data.success) {
-                      const markRollbackSyncResult = dbOps.markRollbackAsSynced(
-                        rollback.id
-                      );
-                      rollbackSyncedCount++;
-                    } else {
-                      console.log(
-                        chalk.yellow(
-                          `⚠ Rollback sync failed: ${rollbackResponse.data.error}`
-                        )
-                      );
-                      rollbackErrorCount++;
-                    }
-                  } catch (rollbackSyncError) {
-                    const errorMsg =
-                      rollbackSyncError.response?.data?.error ||
-                      rollbackSyncError.message;
-                    console.log(
-                      chalk.yellow(
-                        `⚠ Could not sync rollback ${rollback.id}: ${errorMsg}`
-                      )
-                    );
-                    // Check for JWT expiration
-                    if (rollbackSyncError.response?.status === 401 || errorMsg.includes("Token expired")) {
-                      console.log(chalk.yellow("Login to use cloud operations"));
-                    }
-                    rollbackErrorCount++;
-                  }
-                }
-
-                if (rollbackSyncedCount > 0) {
-                  console.log(
-                    chalk.green(
-                      `✓ Successfully synced ${rollbackSyncedCount}/${rollbackResult.rollbacks.length} rollback entries`
-                    )
-                  );
-                }
-                if (rollbackErrorCount > 0) {
-                  console.log(
-                    chalk.yellow(
-                      `    ⚠ Failed to sync ${rollbackErrorCount} rollback entries`
-                    )
-                  );
-                }
-              } else {
-                console.log(
-                  chalk.gray(
-                    `✓ All rollback history for ${envFile.name} is already synced`
-                  )
-                );
-              }
-
-              totalSynced++;
-            } else {
+            if (versionsResult.success && versionsResult.versions.length > 0) {
               console.log(
-                chalk.red(
-                  `Sync failed: ${response.data.error || "Unknown error"}`
+                chalk.cyan(
+                  `Syncing ${versionsResult.versions.length} unsynced version(s) for ${envFile.name}`
                 )
               );
-              totalErrors++;
+
+              let versionSyncedCount = 0;
+              let versionErrorCount = 0;
+
+              for (const version of versionsResult.versions) {
+                try {
+                  const versionSyncData = {
+                    user_email: currentUser.email,
+                    project_name: project.name,
+                    file_name: envFile.name,
+                    version_token: version.version_token,
+                    encrypted_content: version.encrypted_content,
+                    iv: version.iv,
+                    tag: version.tag,
+                    commit_message: version.commit_message,
+                    author_email: version.author_email,
+                    created_at: version.createdAt,
+                  };
+
+                  const versionResponse = await api.post(
+                    "/env-versions",
+                    versionSyncData
+                  );
+
+                  if (versionResponse.data.success) {
+                    const markSyncResult = dbOps.markVersionAsSynced(
+                      version.version_token
+                    );
+                    versionSyncedCount++;
+                  } else {
+                    console.log(
+                      chalk.yellow(
+                        `⚠ Version sync failed: ${versionResponse.data.error}`
+                      )
+                    );
+                    versionErrorCount++;
+                  }
+                } catch (versionSyncError) {
+                  const errorMsg =
+                    versionSyncError.response?.data?.error ||
+                    versionSyncError.message;
+                  console.log(
+                    chalk.yellow(
+                      `⚠ Could not sync version ${version.version_token}: ${errorMsg}`
+                    )
+                  );
+                  // Check for JWT expiration
+                  if (
+                    versionSyncError.response?.status === 401 ||
+                    errorMsg.includes("Token expired")
+                  ) {
+                    console.log(chalk.yellow("Login to use cloud operations"));
+                  }
+                  versionErrorCount++;
+                }
+              }
+
+              if (versionSyncedCount > 0) {
+                console.log(
+                  chalk.green(
+                    `✓ Successfully synced ${versionSyncedCount}/${versionsResult.versions.length} new versions`
+                  )
+                );
+              }
+              if (versionErrorCount > 0) {
+                console.log(
+                  chalk.yellow(
+                    `    ⚠ Failed to sync ${versionErrorCount} versions`
+                  )
+                );
+              }
+            } else {
+              console.log(
+                chalk.gray(
+                  `✓ All versions for ${envFile.name} are already synced`
+                )
+              );
             }
-          } catch (fileError) {
-            console.log(chalk.red(`File sync error`));
-            totalErrors++;
+
+            // Now sync rollback history for this file
+            const rollbackResult = dbOps.getUnsyncedRollbackHistory(envFile.id);
+
+            if (rollbackResult.success && rollbackResult.rollbacks.length > 0) {
+              console.log(
+                chalk.cyan(
+                  `Syncing ${rollbackResult.rollbacks.length} unsynced rollback(s) for ${envFile.name}`
+                )
+              );
+
+              let rollbackSyncedCount = 0;
+              let rollbackErrorCount = 0;
+
+              for (const rollback of rollbackResult.rollbacks) {
+                try {
+                  const rollbackSyncData = {
+                    user_email: currentUser.email,
+                    project_name: project.name,
+                    file_name: envFile.name,
+                    from_version_token: rollback.from_version_token,
+                    to_version_token: rollback.to_version_token,
+                    reason: rollback.rollback_reason,
+                    performed_by: rollback.performed_by,
+                    created_at: rollback.createdAt,
+                  };
+
+                  const rollbackResponse = await api.post(
+                    "/rollback-history",
+                    rollbackSyncData
+                  );
+
+                  if (rollbackResponse.data.success) {
+                    const markRollbackSyncResult = dbOps.markRollbackAsSynced(
+                      rollback.id
+                    );
+                    rollbackSyncedCount++;
+                  } else {
+                    console.log(
+                      chalk.yellow(
+                        `⚠ Rollback sync failed: ${rollbackResponse.data.error}`
+                      )
+                    );
+                    rollbackErrorCount++;
+                  }
+                } catch (rollbackSyncError) {
+                  const errorMsg =
+                    rollbackSyncError.response?.data?.error ||
+                    rollbackSyncError.message;
+                  console.log(
+                    chalk.yellow(
+                      `⚠ Could not sync rollback ${rollback.id}: ${errorMsg}`
+                    )
+                  );
+                  // Check for JWT expiration
+                  if (
+                    rollbackSyncError.response?.status === 401 ||
+                    errorMsg.includes("Token expired")
+                  ) {
+                    console.log(chalk.yellow("Login to use cloud operations"));
+                  }
+                  rollbackErrorCount++;
+                }
+              }
+
+              if (rollbackSyncedCount > 0) {
+                console.log(
+                  chalk.green(
+                    `✓ Successfully synced ${rollbackSyncedCount}/${rollbackResult.rollbacks.length} rollback entries`
+                  )
+                );
+              }
+              if (rollbackErrorCount > 0) {
+                console.log(
+                  chalk.yellow(
+                    `    ⚠ Failed to sync ${rollbackErrorCount} rollback entries`
+                  )
+                );
+              }
+            } else {
+              console.log(
+                chalk.gray(
+                  `✓ All rollback history for ${envFile.name} is already synced`
+                )
+              );
+            }
+          } else {
+            console.log(
+              chalk.red(
+                `Sync failed: ${response.data.error || "Unknown error"}`
+              )
+            );
           }
+        } catch (fileError) {
+          console.log(chalk.red(`File sync error: ${fileError.message}`));
         }
-      } catch (projectError) {
-        console.log(chalk.red(`Project sync error`));
-        totalErrors++;
       }
-    }
-
-    if (totalErrors > 0) {
-    }
-
-    if (totalSynced > 0) {
-      console.log();
+    } catch (projectError) {
+      console.log(chalk.red(`Project sync error: ${projectError.message}`));
     }
   } catch (error) {
     console.log(chalk.red(`Sync failed: ${error.message}`));
 
     if (error.message.includes("Not logged in")) {
       console.log(chalk.yellow("Run 'evm login' to authenticate first"));
-    } else if (error.response?.status === 401 || error.message.includes("Token expired") || error.message.includes("No valid token found")) {
+    } else if (
+      error.response?.status === 401 ||
+      error.message.includes("Token expired") ||
+      error.message.includes("No valid token found")
+    ) {
       console.log(chalk.yellow("Login to use cloud operations"));
     } else if (error.code === "ECONNREFUSED") {
       console.log(
@@ -434,8 +396,104 @@ async function handleClone(args) {
   }
 }
 
+// Cloud rename project function
+async function handleCloudRenameProject(project, newName) {
+  try {
+    const currentUser = getCurrentUser();
+    const api = createAuthenticatedAxios();
+
+    const requestData = {
+      newName: newName,
+      projectName: project.name, // Always send the project name
+    };
+
+    console.log(
+      chalk.blue(
+        `[DEBUG CLIENT] Renaming project "${project.name}" to "${newName}"`
+      )
+    );
+
+    const response = await api.put(`/projects/rename`, requestData);
+
+    if (response.data.success) {
+      console.log(
+        chalk.green(`☁️  Cloud project renamed: ${response.data.message}`)
+      );
+      return { success: true, data: response.data };
+    } else {
+      console.log(chalk.red(`☁️  Cloud rename failed: ${response.data.error}`));
+      return { success: false, error: response.data.error };
+    }
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || error.message;
+    console.log(
+      chalk.red(`☁️  Could not rename project in cloud: ${errorMsg}`)
+    );
+
+    // Check for JWT expiration
+    if (error.response?.status === 401 || errorMsg.includes("Token expired")) {
+      console.log(chalk.yellow("Login to use cloud operations"));
+    } else if (error.code === "ECONNREFUSED") {
+      console.log(
+        chalk.yellow("Make sure the server is running on localhost:4000")
+      );
+    }
+
+    return { success: false, error: errorMsg };
+  }
+}
+
+// Cloud rename env file function
+async function handleCloudRenameFile(project, oldFileName, newFileName) {
+  try {
+    const currentUser = getCurrentUser();
+    const api = createAuthenticatedAxios();
+
+    const requestData = {
+      projectName: project.name,
+      oldFileName: oldFileName,
+      newFileName: newFileName,
+    };
+
+    console.log(
+      // chalk.blue(
+      //   `[DEBUG CLIENT FILE] Sending request data:`,
+      //   JSON.stringify(requestData)
+      // )
+    );
+
+    const response = await api.put(`/env-files/rename`, requestData);
+
+    if (response.data.success) {
+      console.log(
+        chalk.green(`Cloud file renamed: ${response.data.message}`)
+      );
+      return { success: true, data: response.data };
+    } else {
+      console.log(chalk.red(`Cloud rename failed: ${response.data.error}`));
+      return { success: false, error: response.data.error };
+    }
+  } catch (error) {
+    const errorMsg = error.response?.data?.error || error.message;
+    console.log(chalk.red(`Could not rename file in cloud: ${errorMsg}`));
+
+    // Check for JWT expiration
+    if (error.response?.status === 401 || errorMsg.includes("Token expired")) {
+      console.log(chalk.yellow("Login to use cloud operations"));
+    } else if (error.code === "ECONNREFUSED") {
+      console.log(
+        chalk.yellow("Make sure the server is running on localhost:4000")
+      );
+    }
+
+    return { success: false, error: errorMsg };
+  }
+}
+
 module.exports = {
   handleSync,
   handlePull,
   handleClone,
+  handleCloudRenameProject,
+  handleCloudRenameFile,
 };

@@ -670,6 +670,222 @@ app.delete("/env-files", authenticateToken, async (req, res) => {
   }
 });
 
+// Debug endpoint to list all projects for a user
+app.get("/debug/projects", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const projects = await sql`
+      SELECT id, name, cloud_project_id, created_at FROM projects WHERE user_id = ${userId}
+    `;
+
+    console.log(
+      chalk.blue(
+        `[DEBUG] Found ${projects.length} projects for user ${userId}:`
+      )
+    );
+    projects.forEach((p) => {
+      console.log(
+        chalk.blue(
+          `  - ID: ${p.id}, Name: "${p.name}", CloudID: ${p.cloud_project_id}`
+        )
+      );
+    });
+
+    res.json({ success: true, projects });
+  } catch (error) {
+    console.error(
+      chalk.red(`[DEBUG] Error fetching projects: ${error.message}`)
+    );
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Rename project endpoint
+app.put("/projects/rename", authenticateToken, async (req, res) => {
+  try {
+    const { projectName, newName } = req.body;
+    const userId = req.user.userId;
+
+    console.log(
+      chalk.blue(
+        `[DEBUG] Rename request: projectName=${projectName}, newName=${newName}`
+      )
+    );
+
+    if (!newName) {
+      return res.status(400).json({ error: "New name is required" });
+    }
+
+    if (!projectName) {
+      return res.status(400).json({ error: "Project name is required" });
+    }
+
+    console.log(
+      chalk.yellow(
+        `[RENAME] Renaming project "${projectName}" to "${newName}" for user ${req.user.email}`
+      )
+    );
+
+    // Find project by name
+    const projectResult = await sql`
+      SELECT id, name FROM projects WHERE user_id = ${userId} AND name = ${projectName}
+    `;
+
+    console.log(
+      chalk.blue(
+        `[DEBUG] Found ${projectResult.length} projects with name "${projectName}"`
+      )
+    );
+
+    if (projectResult.length === 0) {
+      console.log(
+        chalk.red(
+          `[DEBUG] No project found with name "${projectName}" for user ${userId}`
+        )
+      );
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    const projectId = projectResult[0].id;
+    const oldName = projectResult[0].name;
+
+    // Check if new name already exists for this user
+    const existingProject = await sql`
+      SELECT id FROM projects WHERE user_id = ${userId} AND name = ${newName} AND id != ${projectId}
+    `;
+
+    if (existingProject.length > 0) {
+      return res
+        .status(409)
+        .json({ error: "Project with this name already exists" });
+    }
+
+    // Update project name
+    const updateResult = await sql`
+      UPDATE projects SET name = ${newName}, updated_at = NOW() WHERE id = ${projectId}
+    `;
+
+    console.log(
+      chalk.green(`[RENAME] Project renamed from "${oldName}" to "${newName}"`)
+    );
+
+    res.json({
+      success: true,
+      message: `Project renamed from "${oldName}" to "${newName}"`,
+      oldName,
+      newName,
+      projectId,
+    });
+  } catch (error) {
+    console.error(chalk.red(`[RENAME] Error renaming project:`), error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Rename env file endpoint
+// Rename env file endpoint
+app.put("/env-files/rename", authenticateToken, async (req, res) => {
+  try {
+    const { projectName, cloudProjectId, oldFileName, newFileName } = req.body;
+    const userId = req.user.userId;
+
+    console.log(
+      chalk.blue(
+        `[DEBUG FILE] Rename request: projectName=${projectName}, oldFileName=${oldFileName}, newFileName=${newFileName}`
+      )
+    );
+
+    if (!newFileName) {
+      return res.status(400).json({ error: "New file name is required" });
+    }
+
+    if (!oldFileName) {
+      return res.status(400).json({ error: "Old file name is required" });
+    }
+
+    if (!projectName && !cloudProjectId) {
+      return res
+        .status(400)
+        .json({ error: "Either projectName or cloudProjectId is required" });
+    }
+
+    console.log(
+      chalk.yellow(
+        `[RENAME] Renaming file from ${oldFileName} to ${newFileName} for user ${req.user.email}`
+      )
+    );
+
+    // Find project by name primarily
+    let projectResult = await sql`
+      SELECT id, name FROM projects WHERE user_id = ${userId} AND name = ${projectName}
+    `;
+
+    console.log(
+      chalk.blue(`[DEBUG FILE] Found ${projectResult.length} projects by name`)
+    );
+
+    if (projectResult.length === 0) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    const projectId = projectResult[0].id;
+    const projectNameResult = projectResult[0].name;
+
+    // Find the file to rename
+    const fileResult = await sql`
+      SELECT id, name FROM env_files WHERE project_id = ${projectId} AND name = ${oldFileName}
+    `;
+
+    console.log(
+      chalk.blue(
+        `[DEBUG FILE] Found ${fileResult.length} files with name ${oldFileName}`
+      )
+    );
+
+    if (fileResult.length === 0) {
+      return res.status(404).json({ error: "Environment file not found" });
+    }
+
+    const fileId = fileResult[0].id;
+
+    // Check if new name already exists in this project
+    const existingFile = await sql`
+      SELECT id FROM env_files WHERE project_id = ${projectId} AND name = ${newFileName} AND id != ${fileId}
+    `;
+
+    if (existingFile.length > 0) {
+      return res
+        .status(409)
+        .json({ error: "File with this name already exists in this project" });
+    }
+
+    // Update file name
+    const updateResult = await sql`
+      UPDATE env_files SET name = ${newFileName}, updated_at = NOW() WHERE id = ${fileId}
+    `;
+
+    console.log(chalk.blue(`[DEBUG FILE] Update result:`, updateResult));
+    console.log(
+      chalk.green(
+        `[RENAME] File renamed from "${oldFileName}" to "${newFileName}" in project "${projectNameResult}"`
+      )
+    );
+
+    res.json({
+      success: true,
+      message: `File renamed from "${oldFileName}" to "${newFileName}"`,
+      oldFileName,
+      newFileName,
+      projectName: projectNameResult,
+      fileId,
+    });
+  } catch (error) {
+    console.error(chalk.red(`[RENAME] Error renaming file:`), error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Start server
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {

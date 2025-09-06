@@ -258,20 +258,15 @@ class ModernAuth {
 
           return { success: true };
         } else {
-          console.error(
-            chalk.red("[ERROR] Local authentication failed:"),
-            localResult.error
-          );
-          throw new Error(
-            "Authentication failed - server unavailable and no local credentials found"
-          );
+          console.error(chalk.red("[ERROR] Invalid credentials"));
+          return { success: false, error: "Invalid credentials" };
         }
       } else if (error.response?.status === 401) {
         console.error(chalk.red("[ERROR] Invalid credentials"));
-        throw error;
+        return { success: false, error: "Invalid credentials" };
       } else {
         console.error(chalk.red("[ERROR] Login failed:"), error.message);
-        throw error;
+        return { success: false, error: error.message };
       }
     }
   }

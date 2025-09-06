@@ -88,6 +88,10 @@ function showHelp() {
     chalk.white("  evm <proj> list") +
       chalk.gray("              List files in specific project")
   );
+    console.log(
+      chalk.white("  evm list --all") +
+        chalk.gray("               List all projects and files of the current user")
+    );
 
   // console.log(
   //   chalk.white("  evm clone") +
@@ -156,6 +160,11 @@ function showHelp() {
   console.log(
     chalk.gray("  evm myproject list           # List files in 'myproject'")
   );
+    console.log(
+      chalk.gray(
+        "  evm list --all               # List files in current project"
+      )
+    );
   console.log(
     chalk.gray("  evm rename newname           # Rename current project")
   );

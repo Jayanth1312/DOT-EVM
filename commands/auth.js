@@ -6,7 +6,10 @@ const modernAuth = new ModernAuth();
 
 async function handleLogin(args) {
   console.log(chalk.blue("[INFO] USER LOGIN"));
-  await modernAuth.login();
+  const result = await modernAuth.login();
+  if (!result.success) {
+    process.exit(1);
+  }
 }
 
 async function handleRegister(args) {

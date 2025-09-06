@@ -161,19 +161,59 @@ async function handleRename(args) {
       process.exit(1);
     }
 
-    const result = dbOps.renameProject(
+    const oldProjectName = currentProject.project.name;
+
+    // First rename locally
+    const localResult = dbOps.renameProject(
       currentProject.project.id,
       newProjectName
     );
-    if (result.success) {
+
+    if (!localResult.success) {
       console.log(
-        chalk.green(
-          `Project renamed from "${currentProject.project.name}" to "${newProjectName}"`
-        )
+        chalk.red(`Failed to rename project locally: ${localResult.error}`)
       );
-    } else {
-      console.log(chalk.red(`Failed to rename project: ${result.error}`));
       process.exit(1);
+    }
+
+    console.log(
+      chalk.green(
+        `Local project renamed from "${oldProjectName}" to "${newProjectName}"`
+      )
+    );
+
+    try {
+      const { handleCloudRenameProject } = require("./cloud");
+
+      console.log(chalk.blue("Syncing rename to cloud..."));
+
+      const projectForCloud = {
+        ...currentProject.project,
+        name: oldProjectName,
+      };
+
+      const cloudResult = await handleCloudRenameProject(
+        projectForCloud,
+        newProjectName
+      );
+
+      if (cloudResult.success) {
+        console.log(chalk.green("Project rename synchronized to cloud"));
+      } else {
+        console.log(
+          chalk.yellow("Local rename completed, but cloud sync failed")
+        );
+        console.log(
+          chalk.gray("Run 'evm sync' later to synchronize with cloud")
+        );
+      }
+    } catch (error) {
+      console.log(
+        chalk.yellow("Local rename completed, but cloud sync failed")
+      );
+      console.log(
+        chalk.gray("Run 'evm sync' later to synchronize with cloud")
+      );
     }
   } else if (args.length === 3) {
     const projectName = args[1];
@@ -195,16 +235,49 @@ async function handleRename(args) {
     }
 
     const oldFileName = envFiles.envFiles[0].name;
-    const result = dbOps.renameEnvFile(envFiles.envFiles[0].id, newFileName);
-    if (result.success) {
+    const fileId = envFiles.envFiles[0].id;
+
+    // First rename locally
+    const localResult = dbOps.renameEnvFile(fileId, newFileName);
+    if (!localResult.success) {
       console.log(
-        chalk.green(
-          `File renamed from "${oldFileName}" to "${newFileName}" in project "${projectName}"`
-        )
+        chalk.red(`Failed to rename file locally: ${localResult.error}`)
       );
-    } else {
-      console.log(chalk.red(`Failed to rename file: ${result.error}`));
       process.exit(1);
+    }
+
+    console.log(
+      chalk.green(
+        `Local file renamed from "${oldFileName}" to "${newFileName}" in project "${projectName}"`
+      )
+    );
+
+    try {
+      const { handleCloudRenameFile } = require("./cloud");
+
+      const cloudResult = await handleCloudRenameFile(
+        project.project,
+        oldFileName,
+        newFileName
+      );
+
+      if (cloudResult.success) {
+        console.log();
+      } else {
+        console.log(
+          chalk.yellow("Local rename completed, but cloud sync failed")
+        );
+        console.log(
+          chalk.gray("   Run 'evm sync' later to synchronize with cloud")
+        );
+      }
+    } catch (error) {
+      console.log(
+        chalk.yellow("Local rename completed, but cloud sync failed")
+      );
+      console.log(
+        chalk.gray("   Run 'evm sync' later to synchronize with cloud")
+      );
     }
   } else {
     console.log(chalk.red("Invalid usage for rename command"));
@@ -213,6 +286,75 @@ async function handleRename(args) {
     console.log(chalk.yellow("  evm rename <project_name> <new_file_name>"));
     process.exit(1);
   }
+}
+
+// List all projects and their files for the current user
+async function handleListAllProjects(currentUser) {
+
+  const allProjects = dbOps.getProjectsByUser(currentUser.userId);
+  if (!allProjects.success || allProjects.projects.length === 0) {
+    console.log(
+      chalk.yellow("\n   No projects found. Create a project with 'evm init'.")
+    );
+    return;
+  }
+
+  const projectCol = "Project".padEnd(20);
+  const fileCol = "File".padEnd(20);
+  const sizeCol = "File Size".padEnd(12);
+  const createdAtCol = "Created At".padEnd(16);
+  const lastUpdatedCol = "Last Updated";
+
+  console.log(
+    chalk.cyan(
+      `${projectCol} ${fileCol} ${sizeCol} ${createdAtCol} ${lastUpdatedCol}`
+    )
+  );
+  console.log(chalk.gray("-".repeat(100)));
+
+  allProjects.projects.forEach((project) => {
+    const envFiles = dbOps.getEnvFilesByProject(project.id);
+
+    if (!envFiles.success || envFiles.envFiles.length === 0) {
+      // Print project row with no files
+      const projectName = project.name.padEnd(20);
+      const emptyFile = "-".padEnd(20);
+      const emptySize = "-".padEnd(12);
+      const createdAt = project.createdAt
+        ? new Date(project.createdAt).toLocaleString()
+        : "-";
+      const createdAtStr = String(createdAt).padEnd(16);
+      console.log(
+        chalk.white(
+          `${projectName} ${emptyFile} ${emptySize} ${createdAtStr} -`
+        )
+      );
+      return;
+    }
+
+    envFiles.envFiles.forEach((file, idx) => {
+      const projectName = idx === 0 ? project.name.padEnd(20) : "".padEnd(20);
+      const fileName = file.name.padEnd(20);
+      const fileSize = file.encrypted_content
+        ? `${file.encrypted_content.length} bytes`.padEnd(12)
+        : "0 bytes".padEnd(12);
+
+      const createdAt = file.createdAt
+        ? new Date(file.createdAt).toLocaleString()
+        : "-";
+      const updatedAt = file.updatedAt
+        ? new Date(file.updatedAt).toLocaleString()
+        : "-";
+
+      const createdAtStr = String(createdAt).padEnd(16);
+
+      console.log(
+        chalk.white(
+          `${projectName} ${fileName} ${fileSize} ${createdAtStr} ${updatedAt}`
+        )
+      );
+    });
+  });
 }
 
 // List files in a project
@@ -226,6 +368,11 @@ async function handleProjectList(args) {
   if (!currentUser) {
     console.log(chalk.red("Failed to get current user."));
     process.exit(1);
+  }
+
+  // Check for --all flag
+  if (args.length === 2 && args[1] === "--all") {
+    return handleListAllProjects(currentUser);
   }
 
   let projectName;
@@ -260,6 +407,11 @@ async function handleProjectList(args) {
     console.log(
       chalk.yellow(
         "  evm <project_name> -l       # List files in specific project"
+      )
+    );
+    console.log(
+      chalk.yellow(
+        "  evm list --all              # List all projects and their files"
       )
     );
     process.exit(1);

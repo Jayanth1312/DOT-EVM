@@ -437,7 +437,6 @@ async function addEnvFiles(args = []) {
 
     const currentUser = dbOps.getCurrentUser();
 
-    // First try to get current project by directory
     const currentProjectResult = dbOps.getCurrentProject(currentUser.userId);
     let project;
 
@@ -449,7 +448,6 @@ async function addEnvFiles(args = []) {
         )
       );
     } else {
-      // Fallback to project selection if no current project found
       console.log(
         chalk.yellow(
           "No project found in current directory. Please select a project:"
@@ -492,7 +490,6 @@ async function addEnvFiles(args = []) {
     });
     console.log();
 
-    // Check if user passed "." argument to stage all files automatically
     let fileSelection, commitMessage;
     if (args.includes(".")) {
       console.log(chalk.cyan("Auto-staging all changed files..."));
@@ -543,7 +540,6 @@ async function addEnvFiles(args = []) {
   }
 }
 
-// Create authenticated axios instance for server calls
 function createAuthenticatedAxios() {
   const session = sessionManager.getCurrentUser();
   if (!session?.token) {
@@ -560,7 +556,7 @@ function createAuthenticatedAxios() {
   });
 }
 
-// Sync only specific files that were just pushed (performance optimization)
+// Sync only specific files that were just pushed
 async function syncSpecificFiles(projectId, pushedFiles) {
   try {
     const currentUser = sessionManager.getCurrentUser();
@@ -583,7 +579,7 @@ async function syncSpecificFiles(projectId, pushedFiles) {
         pushedFile.name
       );
       if (!envFile.success) {
-        continue; // Skip if not found
+        continue;
       }
 
       // Sync the env file to server
