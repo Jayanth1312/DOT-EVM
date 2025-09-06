@@ -88,10 +88,12 @@ function showHelp() {
     chalk.white("  evm <proj> list") +
       chalk.gray("              List files in specific project")
   );
-    console.log(
-      chalk.white("  evm list --all") +
-        chalk.gray("               List all projects and files of the current user")
-    );
+  console.log(
+    chalk.white("  evm list --all") +
+      chalk.gray(
+        "               List all projects and files of the current user"
+      )
+  );
 
   // console.log(
   //   chalk.white("  evm clone") +
@@ -102,24 +104,16 @@ function showHelp() {
       chalk.gray("            Rename current project")
   );
   console.log(
-    chalk.white("  evm rename <proj> <file>") +
+    chalk.white("  evm rename <old> <new>") +
       chalk.gray("     Rename environment file")
   );
   console.log(
-    chalk.white("  evm rm <project>") +
-      chalk.gray("             Remove project locally")
+    chalk.white("  evm rm <filename>") +
+      chalk.gray("           Remove file from current project")
   );
   console.log(
-    chalk.white("  evm rm <project> --force") +
-      chalk.gray("     Remove project (local + cloud)")
-  );
-  console.log(
-    chalk.white("  evm rm <proj> <file>") +
-      chalk.gray("         Remove file locally")
-  );
-  console.log(
-    chalk.white("  evm rm <proj> <file> --force") +
-      chalk.gray(" Remove file (local + cloud)")
+    chalk.white("  evm rm <filename> --force") +
+      chalk.gray("   Remove file (local + cloud)")
   );
 
   console.log(chalk.green.bold("\nVERSION CONTROL"));
@@ -160,16 +154,14 @@ function showHelp() {
   console.log(
     chalk.gray("  evm myproject list           # List files in 'myproject'")
   );
-    console.log(
-      chalk.gray(
-        "  evm list --all               # List files in current project"
-      )
-    );
+  console.log(
+    chalk.gray("  evm list --all               # List files in current project")
+  );
   console.log(
     chalk.gray("  evm rename newname           # Rename current project")
   );
   console.log(
-    chalk.gray("  evm rename myproj .env.prod  # Rename file in project")
+    chalk.gray("  evm rename .env .env.prod    # Rename .env to .env.prod")
   );
   console.log(
     chalk.gray("  evm log                      # View commit history")

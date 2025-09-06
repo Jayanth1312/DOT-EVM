@@ -19,20 +19,16 @@ const { dbOps } = require("./db");
 function getCommandSuggestions(partialCommand) {
   const commandMap = {
     rm: [
-      chalk.white("  evm rm <project>") +
-        chalk.gray("           Remove project locally"),
-      chalk.white("  evm rm <project> --force") +
-        chalk.gray("     Remove project (local + cloud)"),
-      chalk.white("  evm rm <proj> <file>") +
-        chalk.gray("       Remove file locally"),
-      chalk.white("  evm rm <proj> <file> --force") +
-        chalk.gray(" Remove file (local + cloud)"),
+      chalk.white("  evm rm <filename>") +
+        chalk.gray("         Remove file from current project"),
+      chalk.white("  evm rm <filename> --force") +
+        chalk.gray("   Remove file (local + cloud)"),
     ],
     rename: [
-      chalk.white("  evm rename <proj>") +
+      chalk.white("  evm rename <name>") +
         chalk.gray("          Rename current project"),
-      chalk.white("  evm rename <proj> <file>") +
-        chalk.gray("   Rename environment file"),
+      chalk.white("  evm rename <old> <new>") +
+        chalk.gray("     Rename environment file"),
     ],
     list: [
       chalk.white("  evm list") +
@@ -74,9 +70,15 @@ function getCommandSuggestions(partialCommand) {
           "                   Manually sync local files to cloud (optional)"
         ),
     ],
+    pending: [
+      chalk.white("  evm pending") +
+        chalk.gray("               Show pending operations queued for sync"),
+    ],
     pull: [
       chalk.white("  evm pull") +
-        chalk.gray("                   Pull environment data from database"),
+        chalk.gray(
+          "                   Pull latest files from cloud to local project"
+        ),
     ],
     push: [
       chalk.white("  evm push") +
@@ -152,7 +154,12 @@ const {
   handleRevert,
   handleRollbackHistory,
 } = require("./commands/workflow");
-const { handleSync, handlePull, handleClone } = require("./commands/cloud");
+const {
+  handleSync,
+  handlePendingOperations,
+  handlePull,
+  handleClone,
+} = require("./commands/cloud");
 
 const args = process.argv.slice(2);
 
@@ -223,14 +230,11 @@ async function dispatchRaw(cmd) {
     console.log(chalk.green("[INFO] Commit created (stub)"));
     process.exit(0);
   }
-  if (parts[0] === "pull") {
-    return handlePull(parts.slice(1));
-  }
-  if (parts[0] === "push") {
-    return pushStagedFiles();
-  }
   if (parts[0] === "sync") {
     return handleSync(parts.slice(1));
+  }
+  if (parts[0] === "pending") {
+    return handlePendingOperations(parts.slice(1));
   }
 
   console.log(chalk.yellow("[USAGE] Unknown command from launcher:"), cmd);
@@ -276,6 +280,8 @@ if (args.length === 0) {
   pushStagedFiles();
 } else if (args.length === 1 && args[0] === "sync") {
   handleSync(args.slice(1));
+} else if (args.length === 1 && args[0] === "pending") {
+  handlePendingOperations(args.slice(1));
 } else if (args.length === 1 && args[0] === "pull") {
   handlePull(args.slice(1));
 } else if (args.length === 1 && args[0] === "clone") {

@@ -757,6 +757,36 @@ async function pushStagedFiles() {
         chalk.yellow("\nLocal push successful, but cloud sync failed:")
       );
       console.log(chalk.gray(`   Error: ${syncError.message}`));
+
+      // Add pending sync operations for each pushed file
+      const currentUser = dbOps.getCurrentUser();
+      if (currentUser) {
+        for (const file of stagedData.files) {
+          const envFile = dbOps.getEnvFileByProjectAndName(
+            stagedData.projectId,
+            file.name
+          );
+          if (envFile.success) {
+            const pendingResult = dbOps.addPendingFileOperation(
+              "SYNC",
+              envFile.envFile.id,
+              file.name,
+              stagedData.projectId,
+              currentUser.userId,
+              JSON.stringify({
+                projectName: stagedData.projectName,
+                commitMessage: stagedData.commitMessage,
+                isPush: true,
+              })
+            );
+
+            if (pendingResult.success) {
+              console.log(chalk.gray(`   ${file.name} queued for next sync`));
+            }
+          }
+        }
+      }
+
       // Check for JWT expiration
       if (
         syncError.response?.status === 401 ||

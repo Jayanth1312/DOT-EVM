@@ -281,6 +281,107 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Get projects by user email
+app.get("/projects", authenticateToken, async (req, res) => {
+  try {
+    const { user_email } = req.query;
+    const userId = req.user.userId;
+
+    if (!user_email) {
+      return res.status(400).json({ error: "User email is required" });
+    }
+
+    // Verify the user_email matches the authenticated user
+    if (user_email !== req.user.email) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const projects = await sql`
+      SELECT id, name, cloud_project_id, created_at, updated_at FROM projects WHERE user_id = ${userId}
+    `;
+
+    console.log(
+      chalk.blue(
+        `[INFO] Found ${projects.length} projects for user ${user_email}`
+      )
+    );
+
+    res.json({ success: true, projects });
+  } catch (error) {
+    console.error(chalk.red(`[ERROR] Failed to fetch projects:`), error);
+    res.status(500).json({ error: "Failed to fetch projects" });
+  }
+});
+
+// Get project files
+app.get("/projects/:projectName/files", authenticateToken, async (req, res) => {
+  try {
+    const { projectName } = req.params;
+    const { user_email } = req.query;
+    const userId = req.user.userId;
+
+    if (!user_email) {
+      return res.status(400).json({ error: "User email is required" });
+    }
+
+    // Verify the user_email matches the authenticated user
+    if (user_email !== req.user.email) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Find project by name and user
+    const projectResult = await sql`
+      SELECT id FROM projects WHERE user_id = ${userId} AND name = ${projectName}
+    `;
+
+    if (projectResult.length === 0) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    const projectId = projectResult[0].id;
+
+    // Get all files for this project
+    const files = await sql`
+      SELECT id, name, encrypted_content, iv, tag, current_version_id, created_at, updated_at
+      FROM env_files
+      WHERE project_id = ${projectId}
+      ORDER BY name
+    `;
+
+    // Get version history for each file
+    const filesWithVersions = [];
+    for (const file of files) {
+      const versions = await sql`
+        SELECT id, version_token, encrypted_content, iv, tag, commit_message, author_email, parent_version_id, created_at
+        FROM env_versions
+        WHERE env_file_id = ${file.id}
+        ORDER BY created_at DESC
+      `;
+
+      filesWithVersions.push({
+        ...file,
+        versions: versions,
+      });
+    }
+
+    console.log(
+      chalk.blue(
+        `[INFO] Found ${files.length} files with version history for project ${projectName}`
+      )
+    );
+
+    res.json({
+      success: true,
+      files: filesWithVersions,
+      projectId,
+      projectName,
+    });
+  } catch (error) {
+    console.error(chalk.red(`[ERROR] Failed to fetch project files:`), error);
+    res.status(500).json({ error: "Failed to fetch project files" });
+  }
+});
+
 // Protected endpoints - Environment file operations
 
 // Sync environment files endpoint

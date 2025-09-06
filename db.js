@@ -267,6 +267,27 @@ function migrateDatabase() {
   } catch (error) {
     // Column already exists, ignore error
   }
+
+  // Create pending_operations table for tracking offline operations
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS pending_operations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER NOT NULL,
+      old_name TEXT,
+      new_name TEXT,
+      project_id INTEGER,
+      user_id INTEGER NOT NULL,
+      operation_data TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      processed BOOLEAN DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    )
+  `
+  ).run();
 }
 
 migrateDatabase();
@@ -530,6 +551,96 @@ const dbOps = {
           updated: false,
         };
       }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  updateEnvFileContent(fileId, encryptedContent, iv, tag) {
+    try {
+      const updateResult = statements.updateEnvFile.run(
+        encryptedContent,
+        iv,
+        tag,
+        fileId
+      );
+
+      if (updateResult.changes > 0) {
+        return { success: true };
+      } else {
+        return { success: false, error: "No file was updated" };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  restoreFileWithVersions(projectId, fileName, fileData, versions) {
+    try {
+      const transaction = db.transaction(() => {
+        // First check if file already exists
+        const existingFile = this.getEnvFileByProjectAndName(
+          projectId,
+          fileName
+        );
+
+        let fileId;
+        if (existingFile.success) {
+          // Update existing file
+          fileId = existingFile.envFile.id;
+          const updateResult = statements.updateEnvFile.run(
+            fileData.encrypted_content,
+            fileData.iv,
+            fileData.tag,
+            fileId
+          );
+
+          if (updateResult.changes === 0) {
+            throw new Error("Failed to update file");
+          }
+        } else {
+          // Create new file
+          const result = statements.insertEnvFile.run(
+            projectId,
+            fileName,
+            fileData.encrypted_content,
+            fileData.iv,
+            fileData.tag
+          );
+          fileId = result.lastInsertRowid;
+        }
+
+        // Delete existing versions for this file
+        db.prepare(`DELETE FROM env_versions WHERE env_file_id = ?`).run(
+          fileId
+        );
+
+        // Insert all versions
+        for (const version of versions) {
+          statements.insertEnvVersion.run(
+            fileId,
+            version.version_token,
+            version.encrypted_content,
+            version.iv,
+            version.tag,
+            version.commit_message,
+            version.author_email,
+            version.parent_version_id
+          );
+        }
+
+        // Update current_version_id if provided
+        if (fileData.current_version_id) {
+          db.prepare(
+            `UPDATE env_files SET current_version_id = ? WHERE id = ?`
+          ).run(fileData.current_version_id, fileId);
+        }
+
+        return fileId;
+      });
+
+      const fileId = transaction();
+      return { success: true, fileId };
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -985,6 +1096,159 @@ const dbOps = {
     } catch (error) {
       return { success: false, error: error.message };
     }
+  },
+
+  // Pending operations management
+  addPendingOperation(
+    operationType,
+    entityType,
+    entityId,
+    oldName,
+    newName,
+    projectId,
+    userId,
+    operationData = null
+  ) {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO pending_operations
+        (operation_type, entity_type, entity_id, old_name, new_name, project_id, user_id, operation_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const result = stmt.run(
+        operationType,
+        entityType,
+        entityId,
+        oldName,
+        newName,
+        projectId,
+        userId,
+        operationData
+      );
+
+      if (result.changes > 0) {
+        return { success: true, operationId: result.lastInsertRowid };
+      } else {
+        return { success: false, error: "Failed to add pending operation" };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  getPendingOperations(userId) {
+    try {
+      const stmt = db.prepare(`
+        SELECT * FROM pending_operations
+        WHERE user_id = ? AND processed = 0
+        ORDER BY createdAt ASC
+      `);
+
+      const operations = stmt.all(userId);
+      return { success: true, operations };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  markOperationAsProcessed(operationId) {
+    try {
+      const stmt = db.prepare(`
+        UPDATE pending_operations
+        SET processed = 1
+        WHERE id = ?
+      `);
+
+      const result = stmt.run(operationId);
+
+      if (result.changes > 0) {
+        return { success: true };
+      } else {
+        return { success: false, error: "Operation not found" };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  removePendingOperation(operationId) {
+    try {
+      const stmt = db.prepare(`
+        DELETE FROM pending_operations
+        WHERE id = ?
+      `);
+
+      const result = stmt.run(operationId);
+
+      if (result.changes > 0) {
+        return { success: true };
+      } else {
+        return { success: false, error: "Operation not found" };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Helper functions for different operation types
+  addPendingFileOperation(
+    operationType,
+    fileId,
+    fileName,
+    projectId,
+    userId,
+    operationData = null
+  ) {
+    return this.addPendingOperation(
+      operationType,
+      "FILE",
+      fileId,
+      fileName,
+      null,
+      projectId,
+      userId,
+      operationData
+    );
+  },
+
+  addPendingProjectOperation(
+    operationType,
+    projectId,
+    projectName,
+    userId,
+    operationData = null
+  ) {
+    return this.addPendingOperation(
+      operationType,
+      "PROJECT",
+      projectId,
+      projectName,
+      null,
+      projectId,
+      userId,
+      operationData
+    );
+  },
+
+  addPendingVersionOperation(
+    operationType,
+    versionId,
+    versionToken,
+    projectId,
+    userId,
+    operationData = null
+  ) {
+    return this.addPendingOperation(
+      operationType,
+      "VERSION",
+      versionId,
+      versionToken,
+      null,
+      projectId,
+      userId,
+      operationData
+    );
   },
 
   getEnvFileByName(projectId, fileName) {

@@ -5,3 +5,5 @@ evm.db
 .evm-config.json
 .evm-session.json
 .env.prod
+.env.test
+.env.temp

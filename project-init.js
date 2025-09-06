@@ -45,11 +45,12 @@ async function initializeProject() {
       borderColor: "gray",
       validateInput: (value) => {
         if (value.length < 2) return false;
+        if (value.startsWith(".")) return false; // Prevent names starting with "."
         if (!/^[a-zA-Z0-9-_\.]+$/.test(value)) return false;
         return true;
       },
       errorMessage:
-        "Project name must be at least 2 characters and contain only letters, numbers, hyphens, underscores, and dots",
+        "Project name must be at least 2 characters, cannot start with '.', and contain only letters, numbers, hyphens, underscores, and dots",
     });
 
     const createResult = dbOps.createProject(

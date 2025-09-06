@@ -151,146 +151,296 @@ async function handleRename(args) {
     process.exit(1);
   }
 
+  // Get current project
+  const currentProject = dbOps.getCurrentProject(currentUser.userId);
+  if (!currentProject.success) {
+    console.log(chalk.red("No active project found. Run 'evm init' first."));
+    process.exit(1);
+  }
+
+  const project = currentProject.project;
+
+  // Determine what we're renaming based on arguments and content
   if (args.length === 2) {
+    // Single argument: evm rename <name>
+    // This is always a project rename
     const newProjectName = args[1];
 
-    // Get current project
-    const currentProject = dbOps.getCurrentProject(currentUser.userId);
-    if (!currentProject.success) {
-      console.log(chalk.red("No active project found. Run 'evm init' first."));
+    // Validate new project name
+    if (newProjectName.startsWith(".")) {
+      console.log(chalk.red("Project name cannot start with '.'"));
       process.exit(1);
     }
 
-    const oldProjectName = currentProject.project.name;
-
-    // First rename locally
-    const localResult = dbOps.renameProject(
-      currentProject.project.id,
-      newProjectName
-    );
-
-    if (!localResult.success) {
-      console.log(
-        chalk.red(`Failed to rename project locally: ${localResult.error}`)
-      );
-      process.exit(1);
-    }
-
-    console.log(
-      chalk.green(
-        `Local project renamed from "${oldProjectName}" to "${newProjectName}"`
-      )
-    );
-
-    try {
-      const { handleCloudRenameProject } = require("./cloud");
-
-      console.log(chalk.blue("Syncing rename to cloud..."));
-
-      const projectForCloud = {
-        ...currentProject.project,
-        name: oldProjectName,
-      };
-
-      const cloudResult = await handleCloudRenameProject(
-        projectForCloud,
-        newProjectName
-      );
-
-      if (cloudResult.success) {
-        console.log(chalk.green("Project rename synchronized to cloud"));
-      } else {
-        console.log(
-          chalk.yellow("Local rename completed, but cloud sync failed")
-        );
-        console.log(
-          chalk.gray("Run 'evm sync' later to synchronize with cloud")
-        );
-      }
-    } catch (error) {
-      console.log(
-        chalk.yellow("Local rename completed, but cloud sync failed")
-      );
-      console.log(
-        chalk.gray("Run 'evm sync' later to synchronize with cloud")
-      );
-    }
+    await handleProjectRename(project, newProjectName, currentUser);
   } else if (args.length === 3) {
-    const projectName = args[1];
-    const newFileName = args[2];
+    const oldName = args[1];
+    const newName = args[2];
 
-    // Get project by name
-    const project = dbOps.getProjectByName(currentUser.userId, projectName);
-    if (!project.success) {
-      console.log(chalk.red(`Project "${projectName}" not found.`));
-      process.exit(1);
-    }
+    const isFileRename =
+      oldName.includes(".") && fs.existsSync(path.join(process.cwd(), oldName));
 
-    const envFiles = dbOps.getEnvFilesByProject(project.project.id);
-    if (!envFiles.success || envFiles.envFiles.length === 0) {
-      console.log(
-        chalk.red(`No environment files found in project "${projectName}".`)
-      );
-      process.exit(1);
-    }
-
-    const oldFileName = envFiles.envFiles[0].name;
-    const fileId = envFiles.envFiles[0].id;
-
-    // First rename locally
-    const localResult = dbOps.renameEnvFile(fileId, newFileName);
-    if (!localResult.success) {
-      console.log(
-        chalk.red(`Failed to rename file locally: ${localResult.error}`)
-      );
-      process.exit(1);
-    }
-
-    console.log(
-      chalk.green(
-        `Local file renamed from "${oldFileName}" to "${newFileName}" in project "${projectName}"`
-      )
-    );
-
-    try {
-      const { handleCloudRenameFile } = require("./cloud");
-
-      const cloudResult = await handleCloudRenameFile(
-        project.project,
-        oldFileName,
-        newFileName
-      );
-
-      if (cloudResult.success) {
-        console.log();
-      } else {
+    if (isFileRename) {
+      // File rename
+      if (newName.startsWith(".") && !newName.includes(".env")) {
         console.log(
-          chalk.yellow("Local rename completed, but cloud sync failed")
-        );
-        console.log(
-          chalk.gray("   Run 'evm sync' later to synchronize with cloud")
+          chalk.yellow(
+            "Warning: New filename starts with '.'. Make sure this is intended."
+          )
         );
       }
-    } catch (error) {
+      await handleFileRename(project, oldName, newName, currentUser);
+    } else {
+      // Project rename (old syntax support)
       console.log(
-        chalk.yellow("Local rename completed, but cloud sync failed")
+        chalk.yellow(
+          "Note: For project renames, use 'evm rename <new_project_name>'"
+        )
       );
-      console.log(
-        chalk.gray("   Run 'evm sync' later to synchronize with cloud")
-      );
+
+      // Validate new project name
+      if (newName.startsWith(".")) {
+        console.log(chalk.red("Project name cannot start with '.'"));
+        process.exit(1);
+      }
+
+      await handleProjectRename(project, newName, currentUser);
     }
   } else {
     console.log(chalk.red("Invalid usage for rename command"));
     console.log(chalk.yellow("Usage:"));
-    console.log(chalk.yellow("  evm rename <new_project_name>"));
-    console.log(chalk.yellow("  evm rename <project_name> <new_file_name>"));
+    console.log(
+      chalk.yellow(
+        "  evm rename <new_project_name>           # Rename current project"
+      )
+    );
+    console.log(
+      chalk.yellow(
+        "  evm rename <old_file> <new_file>        # Rename environment file"
+      )
+    );
+    console.log(chalk.yellow(""));
+    console.log(chalk.gray("Examples:"));
+    console.log(
+      chalk.gray("  evm rename my-new-project               # Rename project")
+    );
+    console.log(
+      chalk.gray("  evm rename .env.old .env.new            # Rename file")
+    );
     process.exit(1);
+  }
+}
+
+// Handle project rename
+async function handleProjectRename(project, newProjectName, currentUser) {
+  const oldProjectName = project.name;
+
+  // First rename locally
+  const localResult = dbOps.renameProject(project.id, newProjectName);
+
+  if (!localResult.success) {
+    console.log(
+      chalk.red(`Failed to rename project locally: ${localResult.error}`)
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.green(
+      `Project renamed from "${oldProjectName}" to "${newProjectName}"`
+    )
+  );
+
+  try {
+    const { handleCloudRenameProject } = require("./cloud");
+
+    // Create project object with old name for cloud API
+    const projectForCloud = {
+      ...project,
+      name: oldProjectName,
+    };
+
+    const cloudResult = await handleCloudRenameProject(
+      projectForCloud,
+      newProjectName
+    );
+
+    if (cloudResult.success) {
+      console.log(chalk.green("Cloud sync successful"));
+    } else {
+      console.log(
+        chalk.yellow("Local rename completed, but cloud sync failed")
+      );
+
+      // Add pending project rename operation
+      const pendingResult = dbOps.addPendingProjectOperation(
+        "RENAME",
+        project.id,
+        oldProjectName,
+        currentUser.userId,
+        JSON.stringify({ newName: newProjectName })
+      );
+
+      if (pendingResult.success) {
+        console.log(chalk.gray("Operation queued for next sync"));
+      }
+
+      console.log(chalk.gray("Run 'evm sync' later to synchronize with cloud"));
+    }
+  } catch (error) {
+    console.log(chalk.yellow("Local rename completed, but cloud sync failed"));
+
+    // Add pending project rename operation
+    const pendingResult = dbOps.addPendingProjectOperation(
+      "RENAME",
+      project.id,
+      oldProjectName,
+      currentUser.userId,
+      JSON.stringify({ newName: newProjectName })
+    );
+
+    if (pendingResult.success) {
+      console.log(chalk.gray("Operation queued for next sync"));
+    }
+
+    console.log(chalk.gray("Run 'evm sync' later to synchronize with cloud"));
+  }
+}
+
+// Handle file rename
+async function handleFileRename(
+  project,
+  oldFileName,
+  newFileName,
+  currentUser
+) {
+  // Find the specific file to rename in current project
+  const envFileResult = dbOps.getEnvFileByProjectAndName(
+    project.id,
+    oldFileName
+  );
+  if (!envFileResult.success) {
+    console.log(
+      chalk.red(
+        `Environment file "${oldFileName}" not found in current project.`
+      )
+    );
+    process.exit(1);
+  }
+
+  const fileId = envFileResult.envFile.id;
+
+  // Check if old file exists in filesystem
+  const currentDir = process.cwd();
+  const oldFilePath = path.join(currentDir, oldFileName);
+  const newFilePath = path.join(currentDir, newFileName);
+
+  if (!fs.existsSync(oldFilePath)) {
+    console.log(
+      chalk.red(`File "${oldFileName}" not found in current directory.`)
+    );
+    process.exit(1);
+  }
+
+  // Check if new filename already exists
+  if (fs.existsSync(newFilePath)) {
+    console.log(
+      chalk.red(`File "${newFileName}" already exists in current directory.`)
+    );
+    process.exit(1);
+  }
+
+  // First rename the physical file
+  try {
+    fs.renameSync(oldFilePath, newFilePath);
+  } catch (error) {
+    console.log(
+      chalk.red(`Failed to rename file in filesystem: ${error.message}`)
+    );
+    process.exit(1);
+  }
+
+  // Then rename in database
+  const localResult = dbOps.renameEnvFile(fileId, newFileName);
+  if (!localResult.success) {
+    // If database update fails, revert the filesystem change
+    try {
+      fs.renameSync(newFilePath, oldFilePath);
+    } catch (revertError) {
+      console.log(
+        chalk.red(`Failed to revert filesystem change: ${revertError.message}`)
+      );
+    }
+    console.log(
+      chalk.red(`Failed to rename file locally: ${localResult.error}`)
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.green(`File renamed from "${oldFileName}" to "${newFileName}"`)
+  );
+
+  try {
+    const { handleCloudRenameFile } = require("./cloud");
+
+    const cloudResult = await handleCloudRenameFile(
+      project,
+      oldFileName,
+      newFileName
+    );
+
+    if (cloudResult.success) {
+      console.log(chalk.green("Cloud sync successful"));
+    } else {
+      // If cloud sync fails, add to pending operations
+      console.log(
+        chalk.yellow("Local rename completed, but cloud sync failed")
+      );
+
+      // Add pending rename operation
+      const pendingResult = dbOps.addPendingOperation(
+        "RENAME",
+        "FILE",
+        fileId,
+        oldFileName,
+        newFileName,
+        project.id,
+        currentUser.userId,
+        JSON.stringify({ projectName: project.name })
+      );
+
+      if (pendingResult.success) {
+        console.log(chalk.gray("Operation queued for next sync"));
+      }
+
+      console.log(chalk.gray("Run 'evm sync' later to synchronize with cloud"));
+    }
+  } catch (error) {
+    console.log(chalk.yellow("Local rename completed, but cloud sync failed"));
+
+    // Add pending rename operation
+    const pendingResult = dbOps.addPendingOperation(
+      "RENAME",
+      "FILE",
+      fileId,
+      oldFileName,
+      newFileName,
+      project.id,
+      currentUser.userId,
+      JSON.stringify({ projectName: project.name })
+    );
+
+    if (pendingResult.success) {
+      console.log(chalk.gray("Operation queued for next sync"));
+    }
+
+    console.log(chalk.gray("Run 'evm sync' later to synchronize with cloud"));
   }
 }
 
 // List all projects and their files for the current user
 async function handleListAllProjects(currentUser) {
-
   const allProjects = dbOps.getProjectsByUser(currentUser.userId);
   if (!allProjects.success || allProjects.projects.length === 0) {
     console.log(
@@ -532,22 +682,12 @@ async function handleRemove(args) {
     console.log(chalk.yellow("Usage:"));
     console.log(
       chalk.white(
-        "  evm rm <project>                    # Remove entire project (local only)"
+        "  evm rm <filename>             # Remove file from current project (local only)"
       )
     );
     console.log(
       chalk.white(
-        "  evm rm <project> --force            # Remove entire project (local + cloud)"
-      )
-    );
-    console.log(
-      chalk.white(
-        "  evm rm <project> <file>             # Remove specific file from project (local only)"
-      )
-    );
-    console.log(
-      chalk.white(
-        "  evm rm <project> <file> --force     # Remove specific file from project (local + cloud)"
+        "  evm rm <filename> --force     # Remove file from current project (local + cloud)"
       )
     );
     return;
@@ -557,345 +697,205 @@ async function handleRemove(args) {
   const forceFlag = args.includes("--force");
   const filteredArgs = args.filter((arg) => arg !== "--force");
 
-  const projectName = filteredArgs[1];
+  const fileName = filteredArgs[1];
 
-  // Get project by name
-  const projectResult = dbOps.getProjectByName(currentUser.userId, projectName);
-  if (!projectResult.success) {
-    console.log(chalk.red(`Project "${projectName}" not found.`));
+  // Get current project from current directory
+  const currentProject = dbOps.getCurrentProject(currentUser.userId);
+  if (!currentProject.success) {
+    console.log(chalk.red("No active project found. Run 'evm init' first."));
     return;
   }
 
-  const project = projectResult.project;
+  const project = currentProject.project;
 
-  if (filteredArgs.length === 2) {
-    const deleteLocation = forceFlag
-      ? "local database and cloud"
-      : "local database only";
+  // Find the file to remove in current project
+  const envFileResult = dbOps.getEnvFileByProjectAndName(project.id, fileName);
+  if (!envFileResult.success) {
+    console.log(chalk.red(`File "${fileName}" not found in current project`));
+    return;
+  }
+
+  const envFile = envFileResult.envFile;
+
+  const deleteLocation = forceFlag
+    ? "local database and cloud"
+    : "local database only";
+  console.log(
+    chalk.yellow(
+      `You are about to delete file "${fileName}" from ${deleteLocation}`
+    )
+  );
+
+  // Get version count for this file
+  const versionsResult = dbOps.getVersionHistory(envFile.id);
+  if (versionsResult.success && versionsResult.versions.length > 0) {
     console.log(
-      chalk.yellow(
-        `\nYou are about to delete the entire project "${projectName}" from ${deleteLocation}`
+      chalk.red(
+        `This will delete ${versionsResult.versions.length} version history entries`
       )
     );
-    console.log(chalk.red("  This will delete:"));
+  }
 
-    const envFilesResult = dbOps.getEnvFilesByProject(project.id);
-    if (envFilesResult.success && envFilesResult.envFiles.length > 0) {
-      console.log(
-        chalk.red(`   • ${envFilesResult.envFiles.length} environment files`)
-      );
-      envFilesResult.envFiles.forEach((file) => {
-        console.log(chalk.red(`     - ${file.name}`));
-      });
+  console.log(chalk.yellow("This action cannot be undone!\n"));
+  if (forceFlag) {
+    console.log(
+      chalk.cyan(
+        "Note: This will delete the file from both your local device AND the cloud."
+      )
+    );
+    console.log(
+      chalk.red("Warning: The cloud version will be permanently lost!")
+    );
+  } else {
+    console.log(
+      chalk.cyan("Note: This will only delete the file from your local device.")
+    );
+    console.log(
+      chalk.cyan("The cloud version of this file will remain intact.")
+    );
+  }
 
-      const { db } = require("../db");
-      const versionCountStmt = db.prepare(`
-        SELECT COUNT(*) as count
-        FROM env_versions v
-        JOIN env_files f ON v.env_file_id = f.id
-        WHERE f.project_id = ?
-      `);
-      const versionCount = versionCountStmt.get(project.id);
-      if (versionCount && versionCount.count > 0) {
-        console.log(
-          chalk.red(`   • ${versionCount.count} version history entries`)
-        );
-      }
+  try {
+    const confirmationTitle = forceFlag
+      ? "Type 'yes' to confirm deletion from local AND cloud:"
+      : "Type 'yes' to confirm local deletion:";
+
+    const confirmation = await createSimplePrompt({
+      title: confirmationTitle,
+      placeholder: "yes",
+      width: 50,
+      borderColor: "red",
+      validateInput: (input) => input.toLowerCase() === "yes",
+      errorMessage: "Please type 'yes' to confirm deletion or Ctrl+C to cancel",
+    });
+
+    if (confirmation.toLowerCase() !== "yes") {
+      console.log(chalk.yellow("File deletion cancelled"));
+      return;
     }
+  } catch (error) {
+    console.log(chalk.yellow("\nFile deletion cancelled"));
+    return;
+  }
 
-    console.log(chalk.red("   • All rollback history"));
-    console.log(chalk.red("   • Project metadata"));
+  console.log(chalk.blue("\nDeleting file..."));
 
-    console.log(chalk.yellow("\nThis action cannot be undone!\n"));
-    if (forceFlag) {
-      console.log(
-        chalk.cyan(
-          "Note: This will delete the project from both your local device AND the cloud."
-        )
-      );
-      console.log(
-        chalk.red("Warning: The cloud version will be permanently lost!")
-      );
-    } else {
-      console.log(
-        chalk.cyan(
-          "Note: This will only delete the project from your local device."
-        )
-      );
-      console.log(
-        chalk.cyan("The cloud version of this project will remain intact.")
-      );
-    }
+  // Delete from filesystem first
+  const filePath = path.join(process.cwd(), fileName);
+  let fileDeletedFromDisk = false;
 
+  if (fs.existsSync(filePath)) {
     try {
-      const confirmationTitle = forceFlag
-        ? "Type 'yes' to confirm deletion from local AND cloud:"
-        : "Type 'yes' to confirm local deletion:";
-
-      const confirmation = await createSimplePrompt({
-        title: confirmationTitle,
-        placeholder: "yes",
-        width: 50,
-        borderColor: "red",
-        validateInput: (input) => input.toLowerCase() === "yes",
-        errorMessage:
-          "Please type 'yes' to confirm deletion or Ctrl+C to cancel",
-      });
-
-      if (confirmation.toLowerCase() !== "yes") {
-        console.log(chalk.yellow("Project deletion cancelled"));
-        return;
-      }
+      fs.unlinkSync(filePath);
+      fileDeletedFromDisk = true;
+      console.log(chalk.green(`File "${fileName}" deleted from filesystem`));
     } catch (error) {
-      console.log(chalk.yellow("\nProject deletion cancelled"));
-      return;
-    }
-
-    console.log(chalk.blue("\n Deleting project..."));
-    const deleteResult = dbOps.deleteProject(project.id, currentUser.userId);
-
-    if (deleteResult.success) {
       console.log(
-        chalk.green(`Project "${projectName}" deleted from local database`)
-      );
-
-      // Update or remove the config file
-      const config = readConfig();
-      if (config && config.name === projectName) {
-        // If this is the project in the config file, remove the entire config
-        const configRemoved = removeConfig();
-        if (configRemoved) {
-          console.log(chalk.gray("Local configuration file removed"));
-        } else {
-          console.log(
-            chalk.yellow("Warning: Could not remove configuration file")
-          );
-        }
-      }
-
-      if (forceFlag) {
-        // Try to delete from cloud when --force is used
-        const cloudDeleteResult = await deleteProjectFromCloud(
-          currentUser.email,
-          projectName
-        );
-        if (cloudDeleteResult.success) {
-          console.log(
-            chalk.green(`Project "${projectName}" deleted from cloud`)
-          );
-          console.log(
-            chalk.gray(
-              "All associated files, versions, and history have been removed from both local and cloud"
-            )
-          );
-        } else {
-          if (
-            cloudDeleteResult.jwtExpired ||
-            cloudDeleteResult.error === "Login to use cloud operations"
-          ) {
-            console.log(chalk.yellow("Login to use cloud operations"));
-          } else {
-            console.log(
-              chalk.yellow(
-                `Warning: Could not delete from cloud (offline?): ${cloudDeleteResult.error}`
-              )
-            );
-            console.log(
-              chalk.gray(
-                "   Project deleted locally but cloud deletion failed. Try again when online."
-              )
-            );
-          }
-        }
-      } else {
-        console.log(
-          chalk.cyan(`Note: Project is only deleted from your offline copy`)
-        );
-        console.log(
-          chalk.cyan(`The cloud version of this project remains untouched`)
-        );
-        console.log(
-          chalk.gray(
-            "All associated files, versions, and history have been removed locally"
-          )
-        );
-      }
-    } else {
-      console.log(chalk.red(`Failed to delete project: ${deleteResult.error}`));
-    }
-  } else if (filteredArgs.length === 3) {
-    const fileName = filteredArgs[2];
-
-    const envFileResult = dbOps.getEnvFileByName(project.id, fileName);
-    if (!envFileResult.success) {
-      console.log(
-        chalk.red(`File "${fileName}" not found in project "${projectName}"`)
+        chalk.red(`Failed to delete file from filesystem: ${error.message}`)
       );
       return;
-    }
-
-    const envFile = envFileResult.envFile;
-
-    const deleteLocation = forceFlag
-      ? "local database and cloud"
-      : "local database only";
-    console.log(chalk.yellow(`You are about to delete file "${fileName}"`));
-
-    // Get version count for this file
-    const versionsResult = dbOps.getVersionHistory(envFile.id);
-    if (versionsResult.success && versionsResult.versions.length > 0) {
-      console.log(
-        chalk.red(
-          `This will delete ${versionsResult.versions.length} version history entries`
-        )
-      );
-    }
-
-    console.log(chalk.yellow("This action cannot be undone!\n"));
-    if (forceFlag) {
-      console.log(
-        chalk.cyan(
-          "Note: This will delete the file from both your local device AND the cloud."
-        )
-      );
-      console.log(
-        chalk.red("Warning: The cloud version will be permanently lost!")
-      );
-    } else {
-      console.log(
-        chalk.cyan(
-          "Note: This will only delete the file from your local device."
-        )
-      );
-      console.log(
-        chalk.cyan("The cloud version of this file will remain intact.")
-      );
-    }
-
-    try {
-      const confirmationTitle = forceFlag
-        ? "Type 'yes' to confirm deletion from local AND cloud:"
-        : "Type 'yes' to confirm local deletion:";
-
-      const confirmation = await createSimplePrompt({
-        title: confirmationTitle,
-        placeholder: "yes",
-        width: 50,
-        borderColor: "red",
-        validateInput: (input) => input.toLowerCase() === "yes",
-        errorMessage:
-          "Please type 'yes' to confirm deletion or Ctrl+C to cancel",
-      });
-
-      if (confirmation.toLowerCase() !== "yes") {
-        console.log(chalk.yellow("File deletion cancelled"));
-        return;
-      }
-    } catch (error) {
-      console.log(chalk.yellow("\nFile deletion cancelled"));
-      return;
-    }
-
-    console.log(chalk.blue("\nDeleting file..."));
-    const deleteResult = dbOps.deleteEnvFile(envFile.id, currentUser.userId);
-
-    if (deleteResult.success) {
-      console.log(
-        chalk.green(`File "${fileName}" deleted from project "${projectName}"`)
-      );
-
-      // Update the config file to remove the deleted file
-      const config = readConfig();
-      if (config && config.name === projectName && config.envFiles) {
-        const updatedEnvFiles = config.envFiles.filter(
-          (file) => file !== fileName
-        );
-        config.envFiles = updatedEnvFiles;
-        const configUpdated = updateConfig(config);
-        if (configUpdated) {
-          console.log(
-            chalk.gray(`Configuration file updated (removed ${fileName})`)
-          );
-        } else {
-          console.log(
-            chalk.yellow("Warning: Could not update configuration file")
-          );
-        }
-      }
-
-      if (forceFlag) {
-        // Try to delete from cloud when --force is used
-        const cloudDeleteResult = await deleteFileFromCloud(
-          currentUser.email,
-          projectName,
-          fileName
-        );
-        if (cloudDeleteResult.success) {
-          console.log(chalk.green(`File "${fileName}" deleted from cloud`));
-          console.log(
-            chalk.gray(
-              "All associated versions and history have been removed from both local and cloud"
-            )
-          );
-        } else {
-          if (
-            cloudDeleteResult.jwtExpired ||
-            cloudDeleteResult.error === "Login to use cloud operations"
-          ) {
-            console.log(chalk.yellow("Login to use cloud operations"));
-          } else {
-            console.log(
-              chalk.yellow(
-                `Warning: Could not delete from cloud (offline?): ${cloudDeleteResult.error}`
-              )
-            );
-            console.log(
-              chalk.gray(
-                "   File deleted locally but cloud deletion failed. Try again when online."
-              )
-            );
-          }
-        }
-      } else {
-        // Note that the file is only deleted locally
-        console.log(
-          chalk.cyan(`Note: File is only deleted from your offline copy`)
-        );
-        console.log(
-          chalk.cyan(`The cloud version of this file remains untouched`)
-        );
-        console.log(
-          chalk.gray(
-            "All associated versions and history have been removed locally"
-          )
-        );
-      }
-    } else {
-      console.log(chalk.red(`Failed to delete file: ${deleteResult.error}`));
     }
   } else {
-    console.log(chalk.red("Too many arguments"));
-    console.log(chalk.yellow("Usage:"));
     console.log(
-      chalk.white(
-        "  evm rm <project>                    # Remove entire project (local only)"
+      chalk.yellow(
+        `File "${fileName}" not found in filesystem (already deleted?)`
       )
     );
-    console.log(
-      chalk.white(
-        "  evm rm <project> --force            # Remove entire project (local + cloud)"
-      )
-    );
-    console.log(
-      chalk.white(
-        "  evm rm <project> <file>             # Remove specific file from project (local only)"
-      )
-    );
-    console.log(
-      chalk.white(
-        "  evm rm <project> <file> --force     # Remove specific file from project (local + cloud)"
-      )
-    );
+  }
+
+  // Delete from database
+  const deleteResult = dbOps.deleteEnvFile(envFile.id, currentUser.userId);
+
+  if (deleteResult.success) {
+    console.log(chalk.green(`File "${fileName}" deleted from local database`));
+
+    // Update the config file to remove the deleted file
+    const config = readConfig();
+    if (config && config.name === project.name && config.envFiles) {
+      const updatedEnvFiles = config.envFiles.filter(
+        (file) => file !== fileName
+      );
+      config.envFiles = updatedEnvFiles;
+      const configUpdated = updateConfig(config);
+      if (configUpdated) {
+        console.log(
+          chalk.gray(`Configuration file updated (removed ${fileName})`)
+        );
+      } else {
+        console.log(
+          chalk.yellow("Warning: Could not update configuration file")
+        );
+      }
+    }
+
+    if (forceFlag) {
+      // Try to delete from cloud when --force is used
+      const cloudDeleteResult = await deleteFileFromCloud(
+        currentUser.email,
+        project.name,
+        fileName
+      );
+      if (cloudDeleteResult.success) {
+        console.log(chalk.green(`File "${fileName}" deleted from cloud`));
+        console.log(
+          chalk.gray(
+            "All associated versions and history have been removed from both local and cloud"
+          )
+        );
+      } else {
+        // If cloud delete fails, add to pending operations
+        if (
+          cloudDeleteResult.jwtExpired ||
+          cloudDeleteResult.error === "Login to use cloud operations"
+        ) {
+          console.log(chalk.yellow("Login to use cloud operations"));
+        } else {
+          console.log(
+            chalk.yellow(
+              `Warning: Could not delete from cloud (offline?): ${cloudDeleteResult.error}`
+            )
+          );
+
+          // Add pending delete operation
+          const pendingResult = dbOps.addPendingFileOperation(
+            "DELETE",
+            envFile.id,
+            fileName,
+            project.id,
+            currentUser.userId,
+            JSON.stringify({
+              projectName: project.name,
+              forceDelete: true,
+            })
+          );
+
+          if (pendingResult.success) {
+            console.log(chalk.gray("Cloud deletion queued for next sync"));
+          }
+
+          console.log(
+            chalk.gray(
+              "   File deleted locally but cloud deletion failed. Try again when online."
+            )
+          );
+        }
+      }
+    } else {
+      // Note that the file is only deleted locally
+      console.log(
+        chalk.cyan(`Note: File is only deleted from your offline copy`)
+      );
+      console.log(
+        chalk.cyan(`The cloud version of this file remains untouched`)
+      );
+      console.log(
+        chalk.gray(
+          "All associated versions and history have been removed locally"
+        )
+      );
+    }
+  } else {
+    console.log(chalk.red(`Failed to delete file: ${deleteResult.error}`));
   }
 }
 
@@ -903,4 +903,5 @@ module.exports = {
   handleRename,
   handleProjectList,
   handleRemove,
+  deleteFileFromCloud,
 };
