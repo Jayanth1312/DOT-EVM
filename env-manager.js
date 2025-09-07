@@ -572,100 +572,178 @@ async function syncSpecificFiles(projectId, pushedFiles) {
 
     const api = createAuthenticatedAxios();
 
-    for (const pushedFile of pushedFiles) {
-      // Get the env file record from database
-      const envFile = dbOps.getEnvFileByProjectAndName(
-        projectId,
-        pushedFile.name
-      );
-      if (!envFile.success) {
-        continue;
-      }
 
-      // Sync the env file to server
-      const syncData = {
-        user_email: currentUser.email,
-        project_name: project.project.name,
-        file_name: envFile.envFile.name,
-        encrypted_content: envFile.envFile.encrypted_content,
-        iv: envFile.envFile.iv,
-        tag: envFile.envFile.tag,
-        created_at: envFile.envFile.createdAt,
-        updated_at: envFile.envFile.updatedAt,
-      };
+    const startTime = Date.now();
 
-      await api.post("/env-files", syncData);
-
-      // Sync only unsynced versions for this specific file
-      const versionsResult = dbOps.getUnsyncedVersionHistory(
-        envFile.envFile.id
-      );
-      if (versionsResult.success && versionsResult.versions.length > 0) {
-        console.log(
-          chalk.cyan(
-            `Syncing ${versionsResult.versions.length} unsynced version(s) for ${envFile.envFile.name}`
-          )
+    // Process all files in parallel for cloud sync
+    const fileSyncPromises = pushedFiles.map(async (pushedFile) => {
+      try {
+        // Get the env file record from database
+        const envFile = dbOps.getEnvFileByProjectAndName(
+          projectId,
+          pushedFile.name
         );
-
-        for (const version of versionsResult.versions) {
-          const versionSyncData = {
-            user_email: currentUser.email,
-            project_name: project.project.name,
-            file_name: envFile.envFile.name,
-            version_token: version.version_token,
-            encrypted_content: version.encrypted_content,
-            iv: version.iv,
-            tag: version.tag,
-            commit_message: version.commit_message,
-            author_email: version.author_email,
-            created_at: version.createdAt,
+        if (!envFile.success) {
+          return {
+            success: false,
+            fileName: pushedFile.name,
+            error: "File not found in database",
           };
-
-          await api.post("/env-versions", versionSyncData);
-          dbOps.markVersionAsSynced(version.version_token);
         }
 
-        console
-          .log
-          // chalk.green(
-          //   `✓ Successfully synced ${versionsResult.versions.length} new versions for ${envFile.envFile.name}`
-          // )
-          ();
-      }
+        // Sync the env file to server
+        const syncData = {
+          user_email: currentUser.email,
+          project_name: project.project.name,
+          file_name: envFile.envFile.name,
+          encrypted_content: envFile.envFile.encrypted_content,
+          iv: envFile.envFile.iv,
+          tag: envFile.envFile.tag,
+          created_at: envFile.envFile.createdAt,
+          updated_at: envFile.envFile.updatedAt,
+        };
 
-      // Sync rollback history for this specific file
-      const rollbackResult = dbOps.getUnsyncedRollbackHistory(
-        envFile.envFile.id
-      );
-      if (rollbackResult.success && rollbackResult.rollbacks.length > 0) {
-        console.log(
-          chalk.cyan(
-            `Syncing ${rollbackResult.rollbacks.length} unsynced rollback(s) for ${envFile.envFile.name}`
-          )
+        await api.post("/env-files", syncData);
+
+        // Sync only unsynced versions for this specific file
+        const versionsResult = dbOps.getUnsyncedVersionHistory(
+          envFile.envFile.id
         );
 
-        for (const rollback of rollbackResult.rollbacks) {
-          const rollbackSyncData = {
-            user_email: currentUser.email,
-            project_name: project.project.name,
-            file_name: envFile.envFile.name,
-            from_version_token: rollback.from_version_token,
-            to_version_token: rollback.to_version_token,
-            reason: rollback.rollback_reason,
-            performed_by: rollback.performed_by,
-            created_at: rollback.createdAt,
-          };
+        let versionsSynced = 0;
+        if (versionsResult.success && versionsResult.versions.length > 0) {
+          // Process versions in parallel too
+          const versionSyncPromises = versionsResult.versions.map(
+            async (version) => {
+              try {
+                const versionSyncData = {
+                  user_email: currentUser.email,
+                  project_name: project.project.name,
+                  file_name: envFile.envFile.name,
+                  version_token: version.version_token,
+                  encrypted_content: version.encrypted_content,
+                  iv: version.iv,
+                  tag: version.tag,
+                  commit_message: version.commit_message,
+                  author_email: version.author_email,
+                  created_at: version.createdAt,
+                };
 
-          await api.post("/rollback-history", rollbackSyncData);
-          dbOps.markRollbackAsSynced(rollback.id);
+                await api.post("/env-versions", versionSyncData);
+                dbOps.markVersionAsSynced(version.version_token);
+                return { success: true };
+              } catch (versionError) {
+                return { success: false, error: versionError.message };
+              }
+            }
+          );
+
+          const versionResults = await Promise.allSettled(versionSyncPromises);
+          versionsSynced = versionResults.filter(
+            (r) => r.status === "fulfilled" && r.value.success
+          ).length;
         }
 
-        console.log(
-          chalk.green(
-            `✓ Successfully synced ${rollbackResult.rollbacks.length} rollback history entries for ${envFile.envFile.name}`
-          )
+        // Sync rollback history for this specific file in parallel
+        const rollbackResult = dbOps.getUnsyncedRollbackHistory(
+          envFile.envFile.id
         );
+
+        let rollbacksSynced = 0;
+        if (rollbackResult.success && rollbackResult.rollbacks.length > 0) {
+          const rollbackSyncPromises = rollbackResult.rollbacks.map(
+            async (rollback) => {
+              try {
+                const rollbackSyncData = {
+                  user_email: currentUser.email,
+                  project_name: project.project.name,
+                  file_name: envFile.envFile.name,
+                  rollback_token: rollback.rollback_token,
+                  target_version_token: rollback.target_version_token,
+                  rollback_reason: rollback.rollback_reason,
+                  author_email: rollback.author_email,
+                  created_at: rollback.createdAt,
+                };
+
+                await api.post("/rollback-history", rollbackSyncData);
+                dbOps.markRollbackAsSynced(rollback.rollback_token);
+                return { success: true };
+              } catch (rollbackError) {
+                return { success: false, error: rollbackError.message };
+              }
+            }
+          );
+
+          const rollbackResults = await Promise.allSettled(
+            rollbackSyncPromises
+          );
+          rollbacksSynced = rollbackResults.filter(
+            (r) => r.status === "fulfilled" && r.value.success
+          ).length;
+        }
+
+        return {
+          success: true,
+          fileName: pushedFile.name,
+          versionsSynced,
+          rollbacksSynced,
+        };
+      } catch (fileError) {
+        return {
+          success: false,
+          fileName: pushedFile.name,
+          error: fileError.message,
+        };
       }
+    });
+
+    // Wait for all files to sync
+    const results = await Promise.allSettled(fileSyncPromises);
+    const endTime = Date.now();
+    const syncTime = Math.round((endTime - startTime) / 10) / 100;
+
+    // Summarize results
+    const successfulFiles = results.filter(
+      (r) => r.status === "fulfilled" && r.value.success
+    );
+    const failedFiles = results.filter(
+      (r) =>
+        r.status === "rejected" ||
+        (r.status === "fulfilled" && !r.value.success)
+    );
+
+    const totalVersions = successfulFiles.reduce(
+      (sum, r) => sum + (r.value.versionsSynced || 0),
+      0
+    );
+    const totalRollbacks = successfulFiles.reduce(
+      (sum, r) => sum + (r.value.rollbacksSynced || 0),
+      0
+    );
+
+    console.log(chalk.cyan(`⚡ Cloud sync completed in ${syncTime}s`));
+
+    if (successfulFiles.length > 0) {
+      const avgTimePerFile =
+        Math.round((syncTime / successfulFiles.length) * 1000) / 1000;
+      console.log(
+        chalk.green(
+          `Successfully synced ${successfulFiles.length}/${pushedFiles.length} files to cloud`
+        )
+      );
+    }
+
+    if (failedFiles.length > 0) {
+      console.log(
+        chalk.red(`Failed to sync ${failedFiles.length} files to cloud:`)
+      );
+      failedFiles.forEach((result) => {
+        if (result.status === "fulfilled") {
+          console.log(
+            chalk.red(`   - ${result.value.fileName}: ${result.value.error}`)
+          );
+        }
+      });
     }
   } catch (error) {
     throw new Error(`Sync failed: ${error.message}`);
@@ -692,11 +770,8 @@ async function pushStagedFiles() {
     stagedData.files.forEach((file) => {
       console.log(`  ${file.name} (${file.size} bytes)`);
     });
-    console.log();
-
     let successCount = 0;
 
-    // Check if this is a revert - if so, skip version creation
     if (stagedData.isRevert) {
       console.log(
         chalk.cyan("Detected revert staging - skipping local version creation")
@@ -704,8 +779,9 @@ async function pushStagedFiles() {
       successCount = stagedData.files.length;
     } else {
       const commitHash = dbOps.generateVersionToken();
+      const startTime = Date.now();
 
-      for (const file of stagedData.files) {
+      const fileProcessingPromises = stagedData.files.map(async (file) => {
         try {
           const encrypted = encryptContent(file.content, stagedData.userEmail);
 
@@ -729,13 +805,18 @@ async function pushStagedFiles() {
             );
 
             if (versionResult.success) {
-              successCount++;
+              return { success: true, fileName: file.name };
             } else {
               console.log(
                 `Failed to create version for ${file.name}: ${
                   versionResult.error || "Unknown error"
                 }`
               );
+              return {
+                success: false,
+                fileName: file.name,
+                error: versionResult.error,
+              };
             }
           } else {
             console.log(
@@ -743,10 +824,46 @@ async function pushStagedFiles() {
                 envFileResult.error || "Unknown error"
               }`
             );
+            return {
+              success: false,
+              fileName: file.name,
+              error: envFileResult.error,
+            };
           }
         } catch (error) {
           console.log(`Error processing ${file.name}: ${error.message}`);
+          return { success: false, fileName: file.name, error: error.message };
         }
+      });
+
+      // Wait for all files to be processed
+      const results = await Promise.allSettled(fileProcessingPromises);
+      const endTime = Date.now();
+      const processingTime = Math.round((endTime - startTime) / 10) / 100;
+
+      // Count successful files
+      const successfulResults = results.filter(
+        (r) => r.status === "fulfilled" && r.value.success
+      );
+      const failedResults = results.filter(
+        (r) =>
+          r.status === "rejected" ||
+          (r.status === "fulfilled" && !r.value.success)
+      );
+
+      successCount = successfulResults.length;
+
+      if (failedResults.length > 0) {
+        console.log(
+          chalk.red(`Failed to process ${failedResults.length} files:`)
+        );
+        failedResults.forEach((result) => {
+          if (result.status === "fulfilled") {
+            console.log(
+              chalk.red(`   - ${result.value.fileName}: ${result.value.error}`)
+            );
+          }
+        });
       }
     }
 
@@ -755,7 +872,6 @@ async function pushStagedFiles() {
     console.log();
 
     try {
-      // Only sync the files that were just pushed, not all files
       await syncSpecificFiles(stagedData.projectId, stagedData.files);
 
       console.log(
@@ -951,7 +1067,7 @@ async function stageRevertedFile(
       projectName: project.project.name,
       userEmail: userEmail,
       commitMessage: commitMessage || "Reverted to previous version",
-      isRevert: true, // Flag to indicate this is a revert
+      isRevert: true,
       files: [
         {
           name: envFile.envFile.name,

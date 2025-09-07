@@ -335,7 +335,9 @@ async function handleSync(args) {
         return;
       }
 
-      for (const envFile of envFiles) {
+      const startTime = Date.now();
+
+      const syncFile = async (envFile) => {
         try {
           const syncData = {
             user_email: currentUser.email,
@@ -357,12 +359,6 @@ async function handleSync(args) {
             const versionsResult = dbOps.getUnsyncedVersionHistory(envFile.id);
 
             if (versionsResult.success && versionsResult.versions.length > 0) {
-              console.log(
-                chalk.cyan(
-                  `Syncing ${versionsResult.versions.length} unsynced version(s) for ${envFile.name}`
-                )
-              );
-
               let versionSyncedCount = 0;
               let versionErrorCount = 0;
 
@@ -526,16 +522,73 @@ async function handleSync(args) {
                 )
               );
             }
+            return {
+              success: true,
+              fileName: envFile.name,
+              versionsCount: versionsResult?.versions?.length || 0,
+            };
           } else {
-            console.log(
-              chalk.red(
-                `Sync failed: ${response.data.error || "Unknown error"}`
-              )
-            );
+            return {
+              success: false,
+              fileName: envFile.name,
+              error: response.data.error || "Unknown error",
+            };
           }
         } catch (fileError) {
-          console.log(chalk.red(`File sync error: ${fileError.message}`));
+          return {
+            success: false,
+            fileName: envFile.name,
+            error: fileError.message,
+          };
         }
+      };
+
+      // Execute all file sync operations in parallel
+      const results = await Promise.allSettled(envFiles.map(syncFile));
+      const endTime = Date.now();
+      const totalTime = Math.round(((endTime - startTime) / 1000) * 100) / 100;
+
+      // Summarize results
+      const successfulFiles = results.filter(
+        (r) => r.status === "fulfilled" && r.value.success
+      );
+      const failedFiles = results.filter(
+        (r) =>
+          r.status === "rejected" ||
+          (r.status === "fulfilled" && !r.value.success)
+      );
+
+      console.log();
+      console.log(chalk.cyan(`⚡ Sync completed in ${totalTime}s`));
+
+      if (successfulFiles.length > 0) {
+        const totalVersions = successfulFiles.reduce(
+          (sum, r) => sum + (r.value.versionsCount || 0),
+          0
+        );
+        const avgTimePerFile =
+          Math.round((totalTime / successfulFiles.length) * 1000) / 1000;
+
+        console.log(
+          chalk.green(
+            `Successfully synced ${successfulFiles.length}/${envFiles.length} files (${totalVersions} versions)`
+          )
+        );
+      }
+
+      if (failedFiles.length > 0) {
+        console.log(
+          chalk.red(`Failed to sync ${failedFiles.length} files:`)
+        );
+        failedFiles.forEach((result) => {
+          if (result.status === "fulfilled") {
+            console.log(
+              chalk.red(`   - ${result.value.fileName}: ${result.value.error}`)
+            );
+          } else {
+            console.log(chalk.red(`   - Processing error: ${result.reason}`));
+          }
+        });
       }
     } catch (projectError) {
       console.log(chalk.red(`Project sync error: ${projectError.message}`));

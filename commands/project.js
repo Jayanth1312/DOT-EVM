@@ -785,7 +785,6 @@ async function handleRemove(args) {
     try {
       fs.unlinkSync(filePath);
       fileDeletedFromDisk = true;
-      console.log(chalk.green(`File "${fileName}" deleted from filesystem`));
     } catch (error) {
       console.log(
         chalk.red(`Failed to delete file from filesystem: ${error.message}`)
@@ -815,9 +814,7 @@ async function handleRemove(args) {
       config.envFiles = updatedEnvFiles;
       const configUpdated = updateConfig(config);
       if (configUpdated) {
-        console.log(
-          chalk.gray(`Configuration file updated (removed ${fileName})`)
-        );
+        console.log();
       } else {
         console.log(
           chalk.yellow("Warning: Could not update configuration file")
@@ -826,7 +823,6 @@ async function handleRemove(args) {
     }
 
     if (forceFlag) {
-      // Try to delete from cloud when --force is used
       const cloudDeleteResult = await deleteFileFromCloud(
         currentUser.email,
         project.name,
