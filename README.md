@@ -1,8 +1,16 @@
 # DOT EVM - Environment Variable Manager
 
+[![npm version](https://badge.fury.io/js/@jayanth1312%2Fevm-cli.svg)](https://badge.fury.io/js/@jayanth1312%2Fevm-cli)
+[![npm downloads](https://img.shields.io/npm/dt/@jayanth1312/evm-cli.svg)](https://www.npmjs.com/package/@jayanth1312/evm-cli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ![EVM CLI Demo](./assets/EVM.png)
 
 A Git-like CLI tool for managing environment variables across projects with encryption and cloud synchronization.
+
+## 📦 NPM Package
+
+This tool is now available as an npm package! Install globally and use from anywhere.
 
 ## ✨ Features
 
@@ -17,24 +25,41 @@ A Git-like CLI tool for managing environment variables across projects with encr
 - **Filesystem Sync**: Git-like file operations (rm removes from disk + DB)
 - **Cross-platform**: Works on Windows, macOS, Linux
 
-## 🚀 Quick Start
+## 🚀 Installation & Quick Start
 
-### Install
+### Install from npm (Recommended)
 
 ```bash
-npm install -g .
+# Install globally
+npm install -g @jayanth1312/evm-cli
+
+# Or use with npx (no installation required)
+npx @jayanth1312/evm-cli
 ```
 
-### Setup
+### Install from Source
 
 ```bash
-# Initialize user directory
-npm run postinstall
+# Clone the repository
+git clone https://github.com/Jayanth1312/DOT-EVM.git
+cd DOT-EVM
 
-# Register/Login
+# Install dependencies and setup
+npm install
+npm run postinstall
+```
+
+### Setup & Authentication
+
+```bash
+# Register a new account
 evm register
-# or
+
+# Or login with existing account
 evm login
+
+# Verify you're logged in
+evm whoami
 ```
 
 ### Basic Usage
@@ -161,6 +186,39 @@ evm-cli/                  # CLI source
 - **Encryption**: AES-256-GCM with user-specific salts
 - **Authentication**: JWT tokens
 - **Server**: Express.js with REST API
+
+## 📦 Package Information
+
+- **Package**: `@jayanth1312/evm-cli`
+- **Version**: 1.0.0
+- **Command**: `evm`
+- **Repository**: [GitHub](https://github.com/Jayanth1312/DOT-EVM)
+- **NPM**: [npm package](https://www.npmjs.com/package/@jayanth1312/evm-cli)
+
+## 🛠️ Development
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit your changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+### Local Development
+
+```bash
+# Clone and setup
+git clone https://github.com/Jayanth1312/DOT-EVM.git
+cd DOT-EVM
+npm install
+
+# Run locally
+node index.js
+
+# Run tests (when available)
+npm test
+```
 
 ## 📦 Dependencies
 

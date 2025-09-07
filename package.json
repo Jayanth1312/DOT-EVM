@@ -1,12 +1,16 @@
 {
-  "name": "evm-cli",
+  "name": "@jayanth1312/evm-cli",
   "version": "1.0.0",
   "description": "Environment Variable Manager - A CLI tool for managing and synchronizing environment files with encryption",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "echo \"No tests specified - skipping\" && exit 0",
     "start": "node index.js",
-    "postinstall": "node setup.js"
+    "postinstall": "node setup.js",
+    "prepublishOnly": "npm run test",
+    "preversion": "npm run test",
+    "version": "git add -A src",
+    "postversion": "git push && git push --tags"
   },
   "keywords": [
     "cli",
@@ -22,7 +26,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Jayanth1312/DOT-EVM.git"
+    "url": "git+https://github.com/Jayanth1312/DOT-EVM.git"
   },
   "homepage": "https://github.com/Jayanth1312/DOT-EVM#readme",
   "bugs": {
@@ -48,6 +52,6 @@
     "sqlite3": "^5.1.7"
   },
   "bin": {
-    "evm": "./index.js"
+    "evm": "index.js"
   }
 }
