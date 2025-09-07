@@ -30,7 +30,7 @@ const createAuthenticatedAxios = () => {
   }
 
   return axios.create({
-    baseURL: "http://localhost:4000",
+    baseURL: "https://dot-evm-jbko.vercel.app",
     timeout: 10000,
     headers: {
       "Content-Type": "application/json",
@@ -553,10 +553,14 @@ async function handleSync(args) {
       console.log(chalk.yellow("Login to use cloud operations"));
     } else if (error.code === "ECONNREFUSED") {
       console.log(
-        chalk.yellow("Make sure the server is running on localhost:4000")
+        chalk.yellow(
+          "Make sure the server is accessible at https://dot-evm-jbko.vercel.app"
+        )
       );
       console.log(
-        chalk.gray("   Start server: cd evm-server && node server.js")
+        chalk.gray(
+          "   Check server status at: https://dot-evm-jbko.vercel.app/health"
+        )
       );
     }
   }
@@ -812,7 +816,9 @@ async function handlePull(args) {
       console.log(chalk.yellow("Please login again: evm login"));
     } else if (error.code === "ECONNREFUSED") {
       console.log(
-        chalk.yellow("Make sure the server is running on localhost:4000")
+        chalk.yellow(
+          "Make sure the server is accessible at https://dot-evm-jbko.vercel.app"
+        )
       );
     }
   }
@@ -863,7 +869,9 @@ async function handleCloudRenameProject(project, newName) {
       console.log(chalk.yellow("Login to use cloud operations"));
     } else if (error.code === "ECONNREFUSED") {
       console.log(
-        chalk.yellow("Make sure the server is running on localhost:4000")
+        chalk.yellow(
+          "Make sure the server is accessible at https://dot-evm-jbko.vercel.app"
+        )
       );
     }
 
@@ -906,7 +914,9 @@ async function handleCloudRenameFile(project, oldFileName, newFileName) {
       console.log(chalk.yellow("Login to use cloud operations"));
     } else if (error.code === "ECONNREFUSED") {
       console.log(
-        chalk.yellow("Make sure the server is running on localhost:4000")
+        chalk.yellow(
+          "Make sure the server is accessible at https://dot-evm-jbko.vercel.app"
+        )
       );
     }
 

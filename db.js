@@ -218,7 +218,7 @@ function migrateDatabase() {
     CREATE TABLE IF NOT EXISTS env_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       env_file_id INTEGER NOT NULL,
-      version_token TEXT UNIQUE NOT NULL,
+      version_token TEXT NOT NULL,
       encrypted_content TEXT NOT NULL,
       iv TEXT NOT NULL,
       tag TEXT NOT NULL,
@@ -228,7 +228,8 @@ function migrateDatabase() {
       syncedToServer BOOLEAN DEFAULT 0,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (env_file_id) REFERENCES env_files(id),
-      FOREIGN KEY (parent_version_id) REFERENCES env_versions(id)
+      FOREIGN KEY (parent_version_id) REFERENCES env_versions(id),
+      UNIQUE(env_file_id, version_token)
     )
   `
   ).run();
@@ -240,6 +241,62 @@ function migrateDatabase() {
     ).run();
   } catch (error) {
     // Column already exists, ignore error
+  }
+
+  // Migrate env_versions table to allow multiple files per commit hash
+  try {
+    // Check if we need to migrate the constraint
+    const tableInfo = db.prepare("PRAGMA table_info(env_versions)").all();
+    const indexes = db.prepare("PRAGMA index_list(env_versions)").all();
+
+    // Check if the old UNIQUE constraint on version_token exists
+    const hasOldConstraint = indexes.some(
+      (index) =>
+        index.name && index.name.includes("version_token") && index.unique
+    );
+
+    if (hasOldConstraint) {
+      console.log("Migrating database schema to support multi-file commits...");
+
+      // Create a temporary table with the new schema
+      db.prepare(
+        `
+        CREATE TABLE env_versions_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          env_file_id INTEGER NOT NULL,
+          version_token TEXT NOT NULL,
+          encrypted_content TEXT NOT NULL,
+          iv TEXT NOT NULL,
+          tag TEXT NOT NULL,
+          commit_message TEXT,
+          author_email TEXT,
+          parent_version_id INTEGER,
+          syncedToServer BOOLEAN DEFAULT 0,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (env_file_id) REFERENCES env_files(id),
+          FOREIGN KEY (parent_version_id) REFERENCES env_versions(id),
+          UNIQUE(env_file_id, version_token)
+        )
+      `
+      ).run();
+
+      // Copy data from old table
+      db.prepare(
+        `
+        INSERT INTO env_versions_new
+        SELECT * FROM env_versions
+      `
+      ).run();
+
+      // Drop old table and rename new table
+      db.prepare("DROP TABLE env_versions").run();
+      db.prepare("ALTER TABLE env_versions_new RENAME TO env_versions").run();
+
+      console.log("Database migration completed successfully.");
+    }
+  } catch (error) {
+    console.log("Database migration failed:", error.message);
+    // Continue anyway as this is not critical for basic functionality
   }
 
   // Create rollback_history table for tracking rollbacks

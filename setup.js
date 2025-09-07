@@ -34,7 +34,7 @@ if (!fs.existsSync(tempDir)) {
 const configPath = path.join(evmDir, "config.json");
 if (!fs.existsSync(configPath)) {
   const defaultConfig = {
-    serverUrl: process.env.EVM_SERVER_URL || "http://localhost:4000",
+    serverUrl: process.env.EVM_SERVER_URL || "https://dot-evm-jbko.vercel.app",
     databasePath: path.join(evmDir, "evm.db"),
     sessionPath: path.join(evmDir, "session.json"),
     stagingPath: path.join(evmDir, "staging.json"),

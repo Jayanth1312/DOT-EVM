@@ -54,7 +54,7 @@ function createAuthenticatedAxios() {
   }
 
   return axios.create({
-    baseURL: "http://localhost:4000",
+    baseURL: "https://dot-evm-jbko.vercel.app",
     timeout: 10000,
     headers: {
       "Content-Type": "application/json",
@@ -160,10 +160,7 @@ async function handleRename(args) {
 
   const project = currentProject.project;
 
-  // Determine what we're renaming based on arguments and content
   if (args.length === 2) {
-    // Single argument: evm rename <name>
-    // This is always a project rename
     const newProjectName = args[1];
 
     // Validate new project name

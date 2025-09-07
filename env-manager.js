@@ -703,10 +703,11 @@ async function pushStagedFiles() {
       );
       successCount = stagedData.files.length;
     } else {
+      const commitHash = dbOps.generateVersionToken();
+
       for (const file of stagedData.files) {
         try {
           const encrypted = encryptContent(file.content, stagedData.userEmail);
-          const versionToken = dbOps.generateVersionToken();
 
           const envFileResult = dbOps.createOrUpdateEnvFile(
             stagedData.projectId,
@@ -719,7 +720,7 @@ async function pushStagedFiles() {
           if (envFileResult.success) {
             const versionResult = dbOps.createEnvVersion(
               envFileResult.envFileId,
-              versionToken,
+              commitHash,
               encrypted.encryptedContent,
               encrypted.iv,
               encrypted.tag,
@@ -730,10 +731,18 @@ async function pushStagedFiles() {
             if (versionResult.success) {
               successCount++;
             } else {
-              console.log(`Failed to create version for ${file.name}`);
+              console.log(
+                `Failed to create version for ${file.name}: ${
+                  versionResult.error || "Unknown error"
+                }`
+              );
             }
           } else {
-            console.log(`Failed to commit ${file.name}`);
+            console.log(
+              `Failed to commit ${file.name}: ${
+                envFileResult.error || "Unknown error"
+              }`
+            );
           }
         } catch (error) {
           console.log(`Error processing ${file.name}: ${error.message}`);
@@ -971,4 +980,5 @@ module.exports = {
   encryptContent,
   decryptContent,
   stageRevertedFile,
+  saveStagedFiles,
 };

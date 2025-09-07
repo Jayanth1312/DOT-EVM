@@ -513,16 +513,28 @@ async function handleRevert(args) {
       return;
     }
 
-    if (matchingVersions.length > 1) {
+    // Group versions by commit hash to handle multiple files in same commit
+    const commitGroups = {};
+    matchingVersions.forEach((version) => {
+      if (!commitGroups[version.version_token]) {
+        commitGroups[version.version_token] = [];
+      }
+      commitGroups[version.version_token].push(version);
+    });
+
+    if (Object.keys(commitGroups).length > 1) {
       console.log(
         chalk.yellow(`Multiple commits found matching "${commitHash}":`)
       );
-      matchingVersions.forEach((version) => {
+      Object.keys(commitGroups).forEach((token) => {
+        const version = commitGroups[token][0]; // Get first version for commit info
         console.log(
           chalk.gray(
-            `  ${version.version_token.substring(0, 8)} - ${
+            `  ${token.substring(0, 8)} - ${
               version.commit_message || "No message"
-            }`
+            } (${commitGroups[token].length} file${
+              commitGroups[token].length > 1 ? "s" : ""
+            })`
           )
         );
       });
@@ -532,113 +544,130 @@ async function handleRevert(args) {
       return;
     }
 
-    const targetVersion = matchingVersions[0];
+    // Get the single commit with all its files
+    const targetCommitHash = Object.keys(commitGroups)[0];
+    const targetVersions = commitGroups[targetCommitHash];
+    const firstVersion = targetVersions[0];
+
     console.log(
-      chalk.cyan(
-        `Found commit: ${targetVersion.commit_message || "No message"}`
-      )
+      chalk.cyan(`Found commit: ${firstVersion.commit_message || "No message"}`)
     );
-    console.log(chalk.gray(`   Hash: ${targetVersion.version_token}`));
+    console.log(chalk.gray(`   Hash: ${targetCommitHash}`));
     console.log(
       chalk.gray(
-        `   Date: ${new Date(targetVersion.createdAt).toLocaleString()}`
+        `   Date: ${new Date(firstVersion.createdAt).toLocaleString()}`
+      )
+    );
+    console.log(
+      chalk.gray(
+        `   Files: ${targetVersions.length} file${
+          targetVersions.length > 1 ? "s" : ""
+        }`
       )
     );
 
-    // Perform the rollback
-    const rollbackResult = dbOps.rollbackToVersion(
-      targetVersion.env_file_id,
-      targetVersion.version_token,
-      reason,
-      currentUser.email
-    );
-
-    if (rollbackResult.success) {
-      console.log(chalk.green(`${rollbackResult.message}`));
-
-      // Get file info
-      const fileStmt = db.db.prepare("SELECT name FROM env_files WHERE id = ?");
-      const fileInfo = fileStmt.get(targetVersion.env_file_id);
-
+    // Show files being reverted
+    const fileStmt = db.db.prepare("SELECT name FROM env_files WHERE id = ?");
+    console.log(chalk.cyan("\nFiles to be reverted:"));
+    targetVersions.forEach((version) => {
+      const fileInfo = fileStmt.get(version.env_file_id);
       if (fileInfo) {
-        console.log(chalk.cyan(`File: ${fileInfo.name}`));
+        console.log(chalk.gray(`  - ${fileInfo.name}`));
+      }
+    });
+
+    console.log(); // Empty line for spacing
+
+    // Instead of individual rollbacks, we'll revert all files together like Git
+    try {
+      // Get project info from the first file
+      const envFileStmt = db.db.prepare("SELECT * FROM env_files WHERE id = ?");
+      const firstEnvFile = envFileStmt.get(targetVersions[0].env_file_id);
+
+      if (!firstEnvFile) {
+        throw new Error("Environment file not found");
       }
 
-      if (rollbackResult.newVersionToken) {
-        console.log(
-          chalk.cyan(
-            `New commit created: ${rollbackResult.newVersionToken.substring(
-              0,
-              8
-            )}`
-          )
-        );
-      }
+      // Prepare revert data for all files
+      const revertFiles = [];
+      const { decryptContent } = require("../env-manager");
+      const path = require("path");
 
-      console.log(chalk.gray(`Rollback reason: ${reason}`));
+      for (const version of targetVersions) {
+        // Get the file info
+        const envFile = envFileStmt.get(version.env_file_id);
+        if (!envFile) continue;
 
-      // Automatically stage the reverted file for push
-      try {
-        const { stageRevertedFile } = require("../env-manager");
+        // Get user's salt for decryption
+        const userSalt = dbOps.getUserEncryptionSalt(currentUser.email);
 
-        // Get project info from the env file
-        const envFileStmt = db.db.prepare(
-          "SELECT * FROM env_files WHERE id = ?"
-        );
-        const envFileInfo = envFileStmt.get(targetVersion.env_file_id);
-
-        if (!envFileInfo) {
-          throw new Error("Environment file not found");
-        }
-
-        const stageResult = await stageRevertedFile(
-          targetVersion.env_file_id,
-          envFileInfo.project_id,
+        // Decrypt the content from the target version
+        const decryptedContent = decryptContent(
+          version.encrypted_content,
+          version.iv,
+          version.tag,
           currentUser.email,
-          `Reverted to ${targetVersion.version_token.substring(
-            0,
-            8
-          )}: ${reason}`
+          userSalt
         );
 
-        if (stageResult.success) {
-          console.log(
-            chalk.green(
-              `\n✓ File ${stageResult.fileName} automatically staged for push`
-            )
-          );
-          console.log(
-            chalk.yellow.bold(
-              '\n📤 IMPORTANT: Run "evm push" to sync the revert to cloud'
-            )
-          );
-          console.log(
-            chalk.gray('💡 Use "evm log" to see the rollback in history')
-          );
-        } else {
-          console.log(
-            chalk.yellow(
-              `\n⚠️  Could not auto-stage file: ${stageResult.error}`
-            )
-          );
-          console.log(
-            chalk.yellow(
-              'Use "evm add" then "evm push" to sync the rollback to cloud'
-            )
-          );
-        }
-      } catch (error) {
-        console.log(
-          chalk.yellow(`\n⚠️  Could not auto-stage file: ${error.message}`)
-        );
-        console.log(
-          chalk.yellow(
-            'Use "evm add" then "evm push" to sync the rollback to cloud'
-          )
-        );
+        revertFiles.push({
+          name: envFile.name,
+          path: path.join(process.cwd(), envFile.name),
+          content: decryptedContent,
+          size: decryptedContent.length,
+        });
+
+        console.log(chalk.green(`✓ Prepared revert: ${envFile.name}`));
       }
-    } else {
-      console.log(chalk.red(`Rollback failed: ${rollbackResult.error}`));
+
+      if (revertFiles.length === 0) {
+        throw new Error("No files to revert");
+      }
+
+      // Stage all reverted files together with same commit message (Git-like behavior)
+      const { saveStagedFiles } = require("../env-manager");
+
+      // Use the ORIGINAL commit message, not a revert message
+      const originalCommitMessage =
+        firstVersion.commit_message || "Restored commit";
+
+      const stagedData = {
+        projectId: firstEnvFile.project_id,
+        projectName: "prod_proj", // We'll get this properly if needed
+        userEmail: currentUser.email,
+        commitMessage: originalCommitMessage, // Keep original message
+        isRevert: false, // We want this to create a normal commit
+        files: revertFiles,
+        stagedAt: new Date().toISOString(),
+      };
+
+      saveStagedFiles(stagedData);
+
+      console.log(
+        chalk.green(
+          `\n✓ Successfully staged ${revertFiles.length} file${
+            revertFiles.length > 1 ? "s" : ""
+          } for restore`
+        )
+      );
+      console.log(chalk.cyan("Staged files:"));
+      revertFiles.forEach((file) => {
+        console.log(chalk.gray(`  - ${file.name}`));
+      });
+      console.log(chalk.cyan(`\nCommit message: "${originalCommitMessage}"`));
+
+      console.log(
+        chalk.yellow.bold(
+          '\nIMPORTANT: Run "evm push" to complete the restore'
+        )
+      );
+      console.log(
+        chalk.gray(
+          "This will restore the files to their state at that commit"
+        )
+      );
+    } catch (error) {
+      console.log(chalk.red(`✗ Revert failed: ${error.message}`));
     }
   } catch (error) {
     console.log(chalk.red(`Revert failed: ${error.message}`));

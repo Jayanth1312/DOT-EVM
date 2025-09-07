@@ -18,7 +18,8 @@ class ConfigManager {
     // Create default config if it doesn't exist
     if (!fs.existsSync(this.configPath)) {
       const defaultConfig = {
-        serverUrl: process.env.EVM_SERVER_URL || "http://localhost:4000",
+        serverUrl:
+          process.env.EVM_SERVER_URL || "https://dot-evm-jbko.vercel.app",
         databasePath: path.join(this.evmDir, "evm.db"),
         sessionPath: path.join(this.evmDir, "session.json"),
         stagingPath: path.join(this.evmDir, "staging.json"),
@@ -41,7 +42,8 @@ class ConfigManager {
 
   getDefaultConfig() {
     return {
-      serverUrl: process.env.EVM_SERVER_URL || "http://localhost:4000",
+      serverUrl:
+        process.env.EVM_SERVER_URL || "https://dot-evm-jbko.vercel.app",
       databasePath: path.join(this.evmDir, "evm.db"),
       sessionPath: path.join(this.evmDir, "session.json"),
       stagingPath: path.join(this.evmDir, "staging.json"),
